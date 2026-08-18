@@ -5,7 +5,9 @@ const os = require('os');
 const path = require('path');
 const { exec } = require('child_process');
 const QRCode = require('qrcode');
+const fs = require('fs');
 const { SfuManager } = require('./sfu');
+const { startTunnel } = require('./tunnel');
 
 const app = express();
 const server = http.createServer(app);
@@ -29,7 +31,6 @@ async function enableTunnel() {
   if (activeTunnel && publicTunnelUrl) return publicTunnelUrl;
   try {
     console.log('[Cloudflare] Criando túnel seguro gratuito (Cloudflare Quick Tunnel)...');
-    const { startTunnel } = await import('untun');
     activeTunnel = await startTunnel({ port: PORT });
     publicTunnelUrl = await activeTunnel.getURL();
     console.log('\n======================================================');
@@ -137,7 +138,18 @@ app.get('/api/network-info', (req, res) => {
 
 // Redirecionamento amigável para sala
 app.get('/r/:roomId', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  const indexPath = path.join(__dirname, 'public', 'index.html');
+  res.sendFile(indexPath, (err) => {
+    if (err) {
+      try {
+        const content = fs.readFileSync(indexPath, 'utf8');
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.send(content);
+      } catch (e) {
+        res.status(500).send('Erro ao carregar a interface do QuickCast');
+      }
+    }
+  });
 });
 
 // Gerenciamento de Salas em memória

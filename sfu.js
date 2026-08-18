@@ -98,7 +98,7 @@ class SfuRoom {
     return videos >= Math.max(1, this.expected.video) && audios >= this.expected.audio;
   }
 
-  async waitForMedia(timeoutMs = 8000) {
+  async waitForMedia(timeoutMs = 2500) {
     const started = Date.now();
     while (Date.now() - started < timeoutMs) {
       if (this.hasMedia()) return true;

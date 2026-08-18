@@ -14,8 +14,7 @@ const QUALITY_PROFILES = {
   '1080p60': {
     width: { ideal: 1920, max: 1920 },
     height: { ideal: 1080, max: 1080 },
-    frameRate: { ideal: 60, max: 60 },
-    displaySurface: 'monitor'
+    frameRate: { ideal: 60, max: 60 }
   },
   '1080p30': {
     width: { ideal: 1920, max: 1920 },
@@ -73,7 +72,9 @@ function getEncodingProfile(quality) {
 
 function setTrackContentHint(track, hint) {
   if (track && 'contentHint' in track) {
-    track.contentHint = hint;
+    try {
+      track.contentHint = hint;
+    } catch (e) {}
   }
 }
 
@@ -81,34 +82,40 @@ function preferEfficientVideoCodecs(peer) {
   if (!peer || typeof peer.getTransceivers !== 'function') return;
   if (typeof RTCRtpSender.getCapabilities !== 'function') return;
 
-  const caps = RTCRtpSender.getCapabilities('video');
-  if (!caps?.codecs?.length) return;
+  try {
+    const caps = RTCRtpSender.getCapabilities('video');
+    if (!caps?.codecs?.length) return;
 
-  const preferred = [];
-  const others = [];
+    const preferred = [];
+    const others = [];
 
-  for (const codec of caps.codecs) {
-    const mime = codec.mimeType.toLowerCase();
-    const prefIndex = VIDEO_CODEC_PREFERENCE.findIndex((p) => mime === p.toLowerCase());
-    if (prefIndex !== -1) {
-      preferred.push({ codec, prefIndex });
-    } else {
-      others.push(codec);
+    for (const codec of caps.codecs) {
+      const mime = codec.mimeType.toLowerCase();
+      const prefIndex = VIDEO_CODEC_PREFERENCE.findIndex((p) => mime === p.toLowerCase());
+      if (prefIndex !== -1) {
+        preferred.push({ codec, prefIndex });
+      } else {
+        others.push(codec);
+      }
     }
+
+    preferred.sort((a, b) => a.prefIndex - b.prefIndex);
+    const ordered = [...preferred.map((p) => p.codec), ...others];
+
+    peer.getTransceivers().forEach((transceiver) => {
+      const kind = transceiver.sender?.track?.kind || transceiver.receiver?.track?.kind;
+      if (kind === 'audio') return;
+      try {
+        if (typeof transceiver.setCodecPreferences === 'function') {
+          transceiver.setCodecPreferences(ordered);
+        }
+      } catch (err) {
+        console.warn('[WebRTC] Preferência de codec ignorada:', err.message);
+      }
+    });
+  } catch (err) {
+    console.warn('[WebRTC] setCodecPreferences erro ignorado:', err.message);
   }
-
-  preferred.sort((a, b) => a.prefIndex - b.prefIndex);
-  const ordered = [...preferred.map((p) => p.codec), ...others];
-
-  peer.getTransceivers().forEach((transceiver) => {
-    const kind = transceiver.sender?.track?.kind || transceiver.receiver?.track?.kind;
-    if (kind === 'audio') return;
-    try {
-      transceiver.setCodecPreferences(ordered);
-    } catch (err) {
-      console.warn('[WebRTC] Preferência de codec ignorada:', err.message);
-    }
-  });
 }
 
 async function applySenderParams(sender, { maxBitrate, maxFramerate, degradationPreference } = {}) {
@@ -270,23 +277,56 @@ class HostManager {
   }
 
   async startCapture({ quality = '1080p60', includeAudio = true, includeMic = false, includeWebcam = false }) {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      if (!window.isSecureContext) {
+        throw new Error('O navegador bloqueia o compartilhamento de tela em conexões HTTP sem SSL. Acesse pelo endereço "http://localhost:' + (location.port || '3000') + '" ou gere um Link Seguro Cloudflare (HTTPS).');
+      }
+      throw new Error('Seu navegador não suporta compartilhamento de tela (getDisplayMedia). Utilize Google Chrome, Microsoft Edge, Firefox, Brave ou Opera.');
+    }
+
     this.quality = quality;
     const videoConstraints = QUALITY_PROFILES[quality] || QUALITY_PROFILES['1080p60'];
     const encoding = getEncodingProfile(quality);
 
     try {
-      // 1. Capturar Tela
-      const displayStream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          ...videoConstraints,
-          cursor: 'always'
-        },
-        audio: includeAudio ? {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false
-        } : false
-      });
+      let displayStream;
+      try {
+        // 1. Capturar Tela com áudio avançado
+        displayStream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            ...videoConstraints,
+            cursor: 'always'
+          },
+          audio: includeAudio ? {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false
+          } : false
+        });
+      } catch (captureErr) {
+        if (captureErr.name === 'NotAllowedError') {
+          throw captureErr;
+        }
+        console.warn('Captura padrão falhou, tentando fallback com configurações básicas:', captureErr);
+        try {
+          displayStream = await navigator.mediaDevices.getDisplayMedia({
+            video: {
+              ...videoConstraints,
+              cursor: 'always'
+            },
+            audio: !!includeAudio
+          });
+        } catch (fallbackErr) {
+          if (fallbackErr.name === 'NotAllowedError') {
+            throw fallbackErr;
+          }
+          // Fallback final: apenas vídeo sem constraints rígidas
+          displayStream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: false
+          });
+        }
+      }
 
       // 2. Mix de Áudio (se Microfone estiver ativo)
       let mixedAudioStream = null;

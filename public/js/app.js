@@ -297,11 +297,11 @@ async function startHostStream() {
     await hostManager.startCapture({ quality, includeAudio, includeMic, includeWebcam });
 
   } catch (err) {
-    console.error(err);
-    if (err.name === 'NotAllowedError') {
-      showToast('Permissão de captura cancelada.', 'info');
+    console.error('Erro ao iniciar stream:', err);
+    if (err.name === 'NotAllowedError' || err.message?.includes('Permission denied')) {
+      showToast('Permissão de captura de tela cancelada pelo usuário.', 'info');
     } else {
-      showToast('Erro ao iniciar transmissão: ' + err.message, 'error');
+      showToast('Erro ao iniciar transmissão: ' + (err.message || err), 'error');
     }
   }
 }

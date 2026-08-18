@@ -36,7 +36,6 @@
     "express": "^5.2.1",
     "qrcode": "^1.5.4",
     "socket.io": "^4.8.3",
-    "untun": "^0.2.2",
     "werift": "^0.24.4"
   },
   "devDependencies": {
