@@ -1,4 +1,40 @@
 const os = require('os');
+
+let werift;
+try {
+  werift = require('werift');
+} catch (err) {
+  console.error('[SFU] Não foi possível carregar o WebRTC do servidor (werift):', err.message);
+  console.error('[SFU] O executável seguirá em modo P2P.');
+
+  class DisabledSfuManager {
+    peek() {
+      return null;
+    }
+
+    get() {
+      return {
+        addSubscriber: async () => false,
+        handlePublishOffer: async () => {
+          throw new Error('SFU indisponível neste executável');
+        },
+        handlePublisherIce: async () => {},
+        handleSubscribeAnswer: async () => {},
+        handleSubscriberIce: async () => {},
+        removeSubscriber: async () => {}
+      };
+    }
+
+    async close() {}
+  }
+
+  module.exports = {
+    SfuManager: DisabledSfuManager,
+    serializeCandidate: () => null
+  };
+  return;
+}
+
 const {
   RTCPeerConnection,
   RTCRtpCodecParameters,
@@ -10,7 +46,7 @@ const {
   useNACK,
   usePLI,
   useREMB
-} = require('werift');
+} = werift;
 
 const RTCP_VIDEO = [useNACK(), usePLI(), useREMB()];
 

@@ -31,6 +31,12 @@ function getStoredBinaryPath() {
 }
 
 function findExistingBinary() {
+  // 0. Next to the packaged .exe (so a bundled/local cloudflared works without download)
+  if (typeof process.pkg !== 'undefined' && process.execPath) {
+    const besideExe = path.join(path.dirname(process.execPath), getBinaryName());
+    if (fs.existsSync(besideExe)) return besideExe;
+  }
+
   // 1. Check in temp dir
   const tempPath = getStoredBinaryPath();
   if (fs.existsSync(tempPath)) {
@@ -165,7 +171,9 @@ function startTunnel(options = {}) {
 
     const child = spawn(binaryPath, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true
+      windowsHide: true,
+      cwd: path.dirname(binaryPath),
+      env: process.env
     });
 
     let resolved = false;

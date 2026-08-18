@@ -3,11 +3,20 @@ const http = require('http');
 const { Server } = require('socket.io');
 const os = require('os');
 const path = require('path');
-const { exec } = require('child_process');
+const { exec, spawn } = require('child_process');
 const QRCode = require('qrcode');
 const fs = require('fs');
 const { SfuManager } = require('./sfu');
 const { startTunnel } = require('./tunnel');
+
+const isPackaged = typeof process.pkg !== 'undefined';
+const publicDir = path.join(__dirname, 'public');
+
+if (isPackaged) {
+  try {
+    process.chdir(path.dirname(process.execPath));
+  } catch (e) {}
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -15,15 +24,85 @@ const io = new Server(server, {
   cors: {
     origin: '*',
     methods: ['GET', 'POST']
-  }
+  },
+  // O cliente fica em public/js/socket.io.min.js — evita createReadStream no snapshot do pkg
+  serveClient: false
 });
 
 let PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 let activeTunnel = null;
 let publicTunnelUrl = null;
 
+const PUBLIC_MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+  '.json': 'application/json',
+  '.map': 'application/json'
+};
+
+function sendPublicFile(relPath, res) {
+  const candidate = relPath === '/' ? 'index.html' : relPath.replace(/^\/+/, '');
+  if (!candidate || candidate.includes('..') || path.isAbsolute(candidate)) return false;
+
+  const filePath = path.join(publicDir, candidate);
+  const relative = path.relative(publicDir, filePath);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) return false;
+
+  try {
+    if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return false;
+    const ext = path.extname(filePath).toLowerCase();
+    res.setHeader('Content-Type', PUBLIC_MIME[ext] || 'application/octet-stream');
+    res.send(fs.readFileSync(filePath));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function sendIndexHtml(res) {
+  try {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(fs.readFileSync(path.join(publicDir, 'index.html')));
+  } catch (e) {
+    res.status(500).send('Erro ao carregar a interface do QuickCast');
+  }
+}
+
+function openBrowser(url) {
+  try {
+    let child;
+    if (process.platform === 'win32') {
+      child = spawn('cmd', ['/c', 'start', '', url], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true
+      });
+    } else if (process.platform === 'darwin') {
+      child = spawn('open', [url], { detached: true, stdio: 'ignore' });
+    } else {
+      child = spawn('xdg-open', [url], { detached: true, stdio: 'ignore' });
+    }
+    if (child) child.unref();
+  } catch (e) {
+    exec(`${process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start ""' : 'xdg-open'} "${url}"`, () => {});
+  }
+}
+
 // Servir arquivos estáticos da pasta public
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(publicDir));
+app.use((req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+  if (req.path.startsWith('/api/') || req.path.startsWith('/socket.io')) return next();
+  if (sendPublicFile(req.path, res)) return;
+  next();
+});
 app.use(express.json());
 
 // Função para iniciar Túnel Cloudflare
@@ -138,18 +217,7 @@ app.get('/api/network-info', (req, res) => {
 
 // Redirecionamento amigável para sala
 app.get('/r/:roomId', (req, res) => {
-  const indexPath = path.join(__dirname, 'public', 'index.html');
-  res.sendFile(indexPath, (err) => {
-    if (err) {
-      try {
-        const content = fs.readFileSync(indexPath, 'utf8');
-        res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        res.send(content);
-      } catch (e) {
-        res.status(500).send('Erro ao carregar a interface do QuickCast');
-      }
-    }
-  });
+  sendIndexHtml(res);
 });
 
 // Gerenciamento de Salas em memória
@@ -394,24 +462,23 @@ startServer(PORT)
       try {
         await enableTunnel();
       } catch (e) {}
+    } else if (isPackaged) {
+      console.log('\n💡 Dica: Clique em "Ativar Link de Internet" na interface para gerar um link público HTTPS.');
+      console.log('======================================================\n');
     } else {
       console.log('\n💡 Dica: Para gerar um link público seguro na internet, execute:');
       console.log('   npm run online (ou clique no botão "🌐 Criar Link de Internet" na interface)');
       console.log('======================================================\n');
     }
 
+    if (isPackaged) {
+      console.log('[QuickCast] Rodando como executável empacotado.');
+    }
+
     // Abrir navegador automaticamente se não for desativado via --no-open
     if (!process.argv.includes('--no-open') && process.env.NODE_ENV !== 'test') {
       const localUrl = `http://localhost:${actualPort}`;
-      const startCmd = process.platform === 'darwin' ? 'open' :
-                       process.platform === 'win32' ? 'start ""' : 'xdg-open';
-      setTimeout(() => {
-        exec(`${startCmd} "${localUrl}"`, (err) => {
-          if (err) {
-            // Ignora caso não consiga abrir automaticamente
-          }
-        });
-      }, 500);
+      setTimeout(() => openBrowser(localUrl), 500);
     }
   })
   .catch((err) => {
