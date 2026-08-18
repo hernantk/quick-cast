@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QuickCast — Compartilhamento de Tela Ultrarrápido & Leve</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <!-- Socket.IO client -->
+  <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+  <!-- Header -->
+  <header class="navbar">
+    <a href="/" class="brand">
+      <div class="brand-icon">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+          <line x1="8" y1="21" x2="16" y2="21"></line>
+          <line x1="12" y1="17" x2="12" y2="21"></line>
+        </svg>
+      </div>
+      <span>Quick<span style="color: var(--accent);">Cast</span></span>
+      <span class="badge-tag">P2P HD</span>
+    </a>
+
+    <div class="nav-right">
+      <!-- Botão 1-Clique Cloudflare Tunnel -->
+      <button class="tunnel-btn" id="tunnelToggleBtn" onclick="toggleCloudflareTunnel()" title="Gerar link público seguro HTTPS para compartilhar com qualquer pessoa na internet">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="2" y1="12" x2="22" y2="12"></line>
+          <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+        </svg>
+        <span id="tunnelBtnText">🌐 Ativar Link de Internet (Cloudflare)</span>
+      </button>
+
+      <div class="network-status" id="networkStatusBadge">
+        <div class="status-dot"></div>
+        <span id="networkIpText">Pronto para conectar</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="main-container">
+    
+    <!-- Setup & Selection Area (Visible when not streaming/viewing) -->
+    <div id="setupSection">
+      <div class="hero">
+        <h1>Compartilhe sua tela instantaneamente</h1>
+        <p>Transmissão direta P2P de altíssimo desempenho, baixa latência e sem necessidade de cadastro ou instalação para quem assiste.</p>
+        
+        <!-- Tab Switcher -->
+        <div class="tab-switcher">
+          <button class="tab-btn active" id="tabHostBtn" onclick="switchTab('host')">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"></path>
+              <line x1="4" y1="22" x2="4" y2="15"></line>
+            </svg>
+            Transmitir Tela
+          </button>
+          <button class="tab-btn" id="tabViewerBtn" onclick="switchTab('viewer')">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </svg>
+            Assistir Transmissão
+          </button>
+        </div>
+      </div>
+
+      <!-- Host Setup Card -->
+      <div id="hostCard" class="card" style="max-width: 580px; margin: 0 auto;">
+        <div class="card-header">
+          <div class="card-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="3" width="20" height="14" rx="2"></rect>
+              <line x1="8" y1="21" x2="16" y2="21"></line>
+              <line x1="12" y1="17" x2="12" y2="21"></line>
+            </svg>
+          </div>
+          <div>
+            <div class="card-title">Criar Sala de Transmissão</div>
+            <div class="card-desc">Escolha as preferências e inicie o compartilhamento</div>
+          </div>
+        </div>
+
+        <!-- Banner Cloudflare -->
+        <div class="cf-banner" id="cfSetupBanner">
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <span>🌐</span>
+            <span id="cfBannerText">Quer compartilhar com quem está em outra casa/cidade?</span>
+          </div>
+          <button class="btn btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 0.8rem;" id="cfBannerBtn" onclick="toggleCloudflareTunnel()">
+            Ativar Cloudflare
+          </button>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Código da Sala</label>
+          <div style="display: flex; gap: 0.5rem;">
+            <input type="text" id="hostRoomInput" class="input-field" placeholder="Ex: SALA123" style="text-transform: uppercase; font-family: monospace; font-weight: bold; font-size: 1.1rem; letter-spacing: 1px;" maxlength="10">
+            <button class="btn btn-secondary" onclick="generateRandomRoom()" title="Gerar novo código">
+              🎲 Gerar
+            </button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Qualidade / Fluidez</label>
+          <select id="qualitySelect" class="select-field">
+            <option value="1080p60" selected>⚡ 1080p 60 FPS (Ultra Fluidez / Games / Vídeos)</option>
+            <option value="1080p30">📄 1080p 30 FPS (Equilibrado / Apresentações)</option>
+            <option value="720p30">🚀 720p 30 FPS (Modo Econômico / Conexão Lenta)</option>
+            <option value="4k30">💎 4K 30 FPS (Máxima Resolução)</option>
+          </select>
+        </div>
+
+        <!-- Recursos Adicionais Selecionados -->
+        <div style="display: flex; flex-direction: column; gap: 0.75rem; background: rgba(0,0,0,0.25); padding: 1rem; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
+          <label class="checkbox-group">
+            <input type="checkbox" id="checkAudio" checked>
+            <span>🔊 Incluir áudio do sistema / aba / janela</span>
+          </label>
+          <label class="checkbox-group">
+            <input type="checkbox" id="checkMic">
+            <span>🎙️ Incluir meu microfone junto (Mix de Áudio)</span>
+          </label>
+          <label class="checkbox-group">
+            <input type="checkbox" id="checkWebcam">
+            <span>📷 Transmitir minha Webcam (Picture-in-Picture)</span>
+          </label>
+          
+          <div style="margin-top: 0.25rem;">
+            <label class="checkbox-group" style="margin-bottom: 0.5rem;" onclick="togglePinInput()">
+              <input type="checkbox" id="checkPin">
+              <span>🔒 Proteger sala com Senha / PIN</span>
+            </label>
+            <input type="text" id="hostPinInput" class="input-field" placeholder="Digite a senha da sala (ex: 1234)" style="display: none; font-family: monospace;">
+          </div>
+        </div>
+
+        <button class="btn btn-primary" id="startShareBtn" onclick="startHostStream()" style="margin-top: 0.5rem;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+          </svg>
+          Iniciar Compartilhamento
+        </button>
+      </div>
+
+      <!-- Viewer Setup Card -->
+      <div id="viewerCard" class="card" style="max-width: 580px; margin: 0 auto; display: none;">
+        <div class="card-header">
+          <div class="card-icon" style="background: rgba(6, 182, 212, 0.15); color: var(--accent);">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </svg>
+          </div>
+          <div>
+            <div class="card-title">Assistir Apresentação</div>
+            <div class="card-desc">Digite o código ou cole o link recebido</div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Código ou Link da Sala</label>
+          <input type="text" id="viewerRoomInput" class="input-field" placeholder="Ex: ABC123 ou link completo" style="font-family: monospace; font-size: 1.05rem;">
+        </div>
+
+        <div class="form-group" id="viewerPinGroup">
+          <label class="form-label">Senha / PIN (se a sala for protegida)</label>
+          <input type="password" id="viewerPinInput" class="input-field" placeholder="Deixe em branco se não houver senha" style="font-family: monospace;">
+        </div>
+
+        <button class="btn btn-primary" onclick="joinViewerStream()" style="margin-top: 0.5rem; background: linear-gradient(135deg, var(--accent), #0284c7);">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path>
+            <polyline points="10 17 15 12 10 7"></polyline>
+            <line x1="15" y1="12" x2="3" y2="12"></line>
+          </svg>
+          Entrar na Transmissão
+        </button>
+      </div>
+    </div>
+
+    <!-- Active Stream View (Host & Viewer) -->
+    <div id="streamSection" class="stream-container">
+      <!-- Stream Top Bar -->
+      <div class="stream-header">
+        <div class="stream-info">
+          <div class="room-badge">
+            <span style="color: var(--text-muted); font-size: 0.8rem; font-family: var(--font-family); font-weight: 500;">SALA:</span>
+            <span id="activeRoomCode">------</span>
+          </div>
+
+          <div class="viewers-badge">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+              <circle cx="9" cy="7" r="4"></circle>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+            </svg>
+            <span id="viewersCountText">1 espectador</span>
+          </div>
+
+          <div class="live-indicator">
+            <span class="dot"></span>
+            <span id="streamStatusText">AO VIVO</span>
+          </div>
+        </div>
+
+        <div class="stream-actions">
+          <!-- Toggle Webcam ao Vivo (Host) -->
+          <button class="btn btn-secondary" id="toggleWebcamBtn" onclick="toggleLiveWebcam()" style="display: none;" title="Ligar/Desligar Webcam">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M23 7l-7 5 7 5V7z"></path>
+              <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+            </svg>
+            <span id="webcamBtnLabel">Webcam</span>
+          </button>
+
+          <button class="btn btn-secondary" onclick="copyShareLink()" id="copyLinkBtn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+            Copiar Link
+          </button>
+
+          <button class="btn btn-secondary" onclick="openQrModal()" title="Exibir QR Code para celular">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="7" height="7"></rect>
+              <rect x="14" y="3" width="7" height="7"></rect>
+              <rect x="14" y="14" width="7" height="7"></rect>
+              <rect x="3" y="14" width="7" height="7"></rect>
+            </svg>
+            QR Code
+          </button>
+
+          <button class="btn btn-danger" id="exitStreamBtn" onclick="handleExitStream()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+            <span id="exitBtnText">Encerrar</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Video Display Stage -->
+      <div class="video-wrapper" id="videoWrapper">
+        <video id="mainVideo" class="video-element" autoplay playsinline></video>
+
+        <!-- Floating Picture-in-Picture Webcam Overlay -->
+        <div id="webcamPip" class="webcam-pip">
+          <div class="webcam-badge">
+            <span class="dot"></span>
+            <span>Apresentador</span>
+          </div>
+          <video id="webcamVideo" autoplay playsinline muted></video>
+        </div>
+
+        <!-- Loading / Overlay State -->
+        <div id="videoOverlay" class="video-overlay-state hidden">
+          <div class="spinner"></div>
+          <h3 id="overlayTitle" style="font-size: 1.3rem;">Conectando à transmissão...</h3>
+          <p id="overlayDesc" style="color: var(--text-muted); max-width: 420px;">Aguardando sinal WebRTC do apresentador...</p>
+          <button id="unmuteBtn" class="btn btn-primary" style="display: none; margin-top: 1rem;" onclick="unmuteVideo()">
+            🔊 Ativar Áudio
+          </button>
+        </div>
+
+        <!-- Floating Video Controls (Appears on Hover) -->
+        <div class="video-controls">
+          <div class="controls-left">
+            <button class="btn-icon" onclick="toggleAudioMute()" id="muteToggleBtn" title="Ativar/Desativar som (M)">
+              <svg id="volumeIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+              </svg>
+            </button>
+            <input type="range" id="volumeSlider" min="0" max="1" step="0.05" value="1" oninput="changeVolume(this.value)" style="width: 90px; accent-color: var(--primary); cursor: pointer;">
+            <span id="statsResolution" style="font-size: 0.8rem; color: var(--text-muted); font-family: monospace;">1080p</span>
+          </div>
+
+          <div class="controls-right">
+            <button class="btn-icon" onclick="toggleFitMode()" title="Alternar Ajustar/Preencher tela">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"></path>
+              </svg>
+            </button>
+
+            <button class="btn-icon" onclick="togglePictureInPicture()" title="Picture-in-Picture (P)">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="3" width="20" height="14" rx="2"></rect>
+                <rect x="12" y="10" width="8" height="5" rx="1" fill="currentColor"></rect>
+              </svg>
+            </button>
+
+            <button class="btn-icon" onclick="toggleFullscreen()" title="Tela Cheia (F)">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Modal Solicitação de Senha / PIN -->
+  <div class="modal-backdrop" id="pinModal">
+    <div class="modal-card">
+      <div class="card-icon" style="background: rgba(239, 68, 68, 0.15); color: var(--danger);">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+        </svg>
+      </div>
+      <h3 style="font-size: 1.3rem;">Sala Protegida por Senha</h3>
+      <p style="color: var(--text-muted); font-size: 0.9rem;">Esta transmissão requer uma senha para liberar o acesso ao vídeo.</p>
+      
+      <input type="password" id="modalPinInput" class="input-field" placeholder="Digite a senha da sala" style="font-family: monospace; text-align: center; font-size: 1.1rem; letter-spacing: 2px;">
+      
+      <div style="display: flex; gap: 0.75rem; width: 100%;">
+        <button class="btn btn-secondary" style="flex: 1;" onclick="cancelPinModal()">Cancelar</button>
+        <button class="btn btn-primary" style="flex: 1;" onclick="submitPinModal()">Entrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Confirmação de Encerramento do Cloudflare Tunnel -->
+  <div class="modal-backdrop" id="cfConfirmModal" onclick="closeCfConfirmModal(event)">
+    <div class="modal-card" onclick="event.stopPropagation()">
+      <div class="card-icon" style="background: rgba(244, 129, 32, 0.15); color: var(--cloudflare);">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+          <line x1="12" y1="9" x2="12" y2="13"></line>
+          <line x1="12" y1="17" x2="12.01" y2="17"></line>
+        </svg>
+      </div>
+      <h3 style="font-size: 1.3rem;">Desativar Link de Internet?</h3>
+      <p style="color: var(--text-muted); font-size: 0.9rem;">
+        Ao desativar o link público da Cloudflare, <b>espectadores que estiverem assistindo pela internet serão desconectados</b>.
+      </p>
+      
+      <div style="display: flex; gap: 0.75rem; width: 100%; margin-top: 0.5rem;">
+        <button class="btn btn-secondary" style="flex: 1;" onclick="closeCfConfirmModal()">Manter Ativo</button>
+        <button class="btn btn-danger" style="flex: 1;" onclick="confirmDisableTunnel()">Sim, Desativar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- QR Code Modal -->
+  <div class="modal-backdrop" id="qrModal" onclick="closeQrModal(event)">
+    <div class="modal-card" onclick="event.stopPropagation()">
+      <button class="modal-close" onclick="closeQrModal()">&times;</button>
+      <h3 style="font-size: 1.3rem;">Escanear para Assistir</h3>
+      <p style="color: var(--text-muted); font-size: 0.9rem;" id="qrDescText">Abra a câmera do celular para assistir à transmissão instantaneamente.</p>
+      <img id="qrImage" class="qr-image" src="" alt="QR Code da Sala">
+      <div id="modalRoomLink" style="font-size: 0.85rem; color: var(--text-dim); word-break: break-all; font-family: monospace;"></div>
+      <button class="btn btn-primary" style="width: 100%;" onclick="copyShareLink()">
+        Copiar Link Completo
+      </button>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- Application Logic -->
+  <script src="/js/webrtc.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,45 @@
+{
+  "name": "quickcast",
+  "version": "1.0.0",
+  "description": "QuickCast - Compartilhamento de Tela Ultrarrápido e Leve",
+  "main": "server.js",
+  "bin": "server.js",
+  "pkg": {
+    "assets": [
+      "public/**/*"
+    ],
+    "targets": [
+      "node18-win-x64",
+      "node18-linux-x64",
+      "node18-macos-x64"
+    ],
+    "outputPath": "dist"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "online": "node server.js --tunnel",
+    "dev": "node --watch server.js",
+    "tunnel": "node server.js --tunnel",
+    "build:exe": "pkg . --targets node18-win-x64 --output dist/quickcast.exe",
+    "build:all": "pkg . --targets node18-win-x64,node18-linux-x64,node18-macos-x64 --out-path dist"
+  },
+  "keywords": [
+    "screen-sharing",
+    "webrtc",
+    "p2p",
+    "cloudflare-tunnel"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "express": "^5.2.1",
+    "qrcode": "^1.5.4",
+    "socket.io": "^4.8.3",
+    "untun": "^0.2.2",
+    "werift": "^0.24.4"
+  },
+  "devDependencies": {
+    "pkg": "^5.8.1"
+  }
+}
