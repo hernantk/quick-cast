@@ -370,7 +370,7 @@ class HostManager {
         this.onWebcamReady(this.webcamStream);
       }
 
-      // Atualiza os peers já conectados
+      // Atualiza os peers já conectados (fallback P2P)
       this.peers.forEach((peer, viewerId) => {
         const webcamTrack = this.webcamStream.getVideoTracks()[0];
         if (webcamTrack) {
@@ -384,6 +384,14 @@ class HostManager {
           });
         }
       });
+
+      if (this.sfuPeer && this.webcamStream) {
+        const webcamTrack = this.webcamStream.getVideoTracks()[0];
+        if (webcamTrack && !this.sfuSenders.webcamSender) {
+          this.sfuSenders.webcamSender = this.sfuPeer.addTrack(webcamTrack, this.webcamStream);
+          await this.renegotiateSfu();
+        }
+      }
 
       return this.webcamStream;
     } catch (err) {
@@ -520,6 +528,15 @@ class HostManager {
     this.peers.clear();
     this.peerSenders.clear();
 
+    if (this.sfuPeer) {
+      try {
+        this.sfuPeer.close();
+      } catch (e) {}
+      this.sfuPeer = null;
+      this.sfuSenders = {};
+      this.sfuReady = false;
+    }
+
     if (this.onStreamEnded) {
       this.onStreamEnded();
     }
@@ -537,43 +554,72 @@ class ViewerManager {
     this.onConnectionStateChange = onConnectionStateChange;
     this.peer = null;
     this.hostId = null;
+    this.signalingTarget = 'p2p';
+    this.fallbackTimer = null;
+    this.p2pRequested = false;
     this.screenStream = new MediaStream();
     this.webcamStream = new MediaStream();
     this.videoTracksCount = 0;
   }
 
-  async handleOffer(fromHostId, offer, hasWebcam) {
-    this.hostId = fromHostId;
-    this.videoTracksCount = 0;
-
-    if (this.peer) {
-      this.peer.close();
+  clearFallbackTimer() {
+    if (this.fallbackTimer) {
+      clearTimeout(this.fallbackTimer);
+      this.fallbackTimer = null;
     }
+  }
 
-    this.peer = new RTCPeerConnection(rtcConfig);
-    this.screenStream = new MediaStream();
-    this.webcamStream = new MediaStream();
+  requestP2pFallback() {
+    if (this.p2pRequested || this.signalingTarget !== 'sfu') return;
+    if (this.screenStream.getVideoTracks().length > 0) return;
+    this.p2pRequested = true;
+    this.clearFallbackTimer();
+    console.warn('[SFU] Falha de conexão, pedindo fallback P2P');
+    this.socket.emit('sfu:request-p2p');
+  }
 
+  emitIce(candidate) {
+    if (this.signalingTarget === 'sfu') {
+      this.socket.emit('sfu:subscribe-ice', { candidate });
+    } else if (this.hostId) {
+      this.socket.emit('signal:ice-candidate', {
+        targetId: this.hostId,
+        candidate
+      });
+    }
+  }
+
+  emitAnswer(answer) {
+    if (this.signalingTarget === 'sfu') {
+      this.socket.emit('sfu:subscribe-answer', { answer });
+    } else {
+      this.socket.emit('signal:answer', {
+        toHostId: this.hostId,
+        answer
+      });
+    }
+  }
+
+  wirePeer() {
     this.peer.ontrack = (event) => {
       console.log('[WebRTC Viewer] Track recebida:', event.track.kind, event.streams[0]?.id);
 
       if (event.track.kind === 'audio') {
-        this.screenStream.addTrack(event.track);
+        if (![...this.screenStream.getAudioTracks()].some((t) => t.id === event.track.id)) {
+          this.screenStream.addTrack(event.track);
+        }
         if (this.onScreenTrackReceived) {
           this.onScreenTrackReceived(this.screenStream);
         }
       } else if (event.track.kind === 'video') {
         this.videoTracksCount++;
 
-        // A primeira faixa de vídeo recebida é a Tela compartilhada
         if (this.videoTracksCount === 1) {
           this.screenStream.addTrack(event.track);
           if (this.onScreenTrackReceived) {
             this.onScreenTrackReceived(this.screenStream);
           }
-        } 
-        // A segunda faixa de vídeo é a Webcam PiP
-        else {
+        } else {
           this.webcamStream.addTrack(event.track);
           if (this.onWebcamTrackReceived) {
             this.onWebcamTrackReceived(this.webcamStream);
@@ -583,29 +629,62 @@ class ViewerManager {
     };
 
     this.peer.onicecandidate = (event) => {
-      if (event.candidate && this.hostId) {
-        this.socket.emit('signal:ice-candidate', {
-          targetId: this.hostId,
-          candidate: event.candidate
-        });
-      }
+      if (event.candidate) this.emitIce(event.candidate);
     };
 
     this.peer.onconnectionstatechange = () => {
+      const state = this.peer?.connectionState;
+      if (state === 'connected') {
+        this.clearFallbackTimer();
+      } else if (state === 'failed') {
+        this.requestP2pFallback();
+      }
       if (this.onConnectionStateChange) {
-        this.onConnectionStateChange(this.peer.connectionState);
+        this.onConnectionStateChange(state);
       }
     };
+  }
+
+  async handleOffer(fromHostId, offer, hasWebcam) {
+    const viaSfu = fromHostId === 'sfu';
+    this.hostId = fromHostId;
+    this.signalingTarget = viaSfu ? 'sfu' : 'p2p';
+
+    if (!viaSfu) {
+      this.p2pRequested = true;
+      this.clearFallbackTimer();
+    }
+
+    const reusePeer = viaSfu && this.peer && this.peer.signalingState !== 'closed' && this.signalingTarget === 'sfu';
+
+    if (!reusePeer) {
+      if (this.peer) {
+        try {
+          this.peer.close();
+        } catch (e) {}
+      }
+
+      this.videoTracksCount = 0;
+      this.peer = new RTCPeerConnection(rtcConfig);
+      this.screenStream = new MediaStream();
+      this.webcamStream = new MediaStream();
+      this.wirePeer();
+    }
 
     await this.peer.setRemoteDescription(new RTCSessionDescription(offer));
     preferEfficientVideoCodecs(this.peer);
     const answer = await this.peer.createAnswer();
     await this.peer.setLocalDescription(answer);
+    this.emitAnswer(answer);
 
-    this.socket.emit('signal:answer', {
-      toHostId: fromHostId,
-      answer
-    });
+    if (viaSfu && !this.p2pRequested) {
+      this.clearFallbackTimer();
+      this.fallbackTimer = setTimeout(() => {
+        if (this.peer?.connectionState !== 'connected') {
+          this.requestP2pFallback();
+        }
+      }, 8000);
+    }
   }
 
   async handleIceCandidate(candidate) {
@@ -619,10 +698,13 @@ class ViewerManager {
   }
 
   leave() {
+    this.clearFallbackTimer();
+    this.p2pRequested = false;
     if (this.peer) {
       this.peer.close();
       this.peer = null;
     }
     this.hostId = null;
+    this.signalingTarget = 'p2p';
   }
 }

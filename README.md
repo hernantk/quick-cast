@@ -72,7 +72,7 @@ Para compilar um novo executável autônomo:
 ```bash
 npm run build:exe
 ```
-O executável gerado estará na pasta `dist/nao-faz-o-l.exe`.
+O executável gerado estará na pasta `dist/quickcast.exe`.
 
 ### 🚀 Publicação Automática no GitHub Releases
 Ao criar e enviar uma tag Git para o repositório, o GitHub Actions gera o executável automaticamente e anexa na Release:

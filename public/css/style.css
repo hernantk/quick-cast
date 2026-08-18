@@ -83,6 +83,19 @@ body {
   box-shadow: 0 4px 15px var(--border-glow);
 }
 
+.brand-logo-img {
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-md);
+  object-fit: contain;
+  box-shadow: 0 4px 15px var(--border-glow);
+  transition: transform 0.2s ease;
+}
+
+.brand:hover .brand-logo-img {
+  transform: scale(1.05);
+}
+
 .badge-tag {
   font-size: 0.75rem;
   font-weight: 600;

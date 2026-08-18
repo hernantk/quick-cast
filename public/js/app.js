@@ -267,6 +267,9 @@ async function startHostStream() {
 
         // Notifica o servidor para registrar a sala com PIN opcional
         socket.emit('host:create-room', { roomId, pin });
+        hostManager.publishToSfu().catch((err) => {
+          console.warn('[SFU] Publicação falhou, espectadores usarão P2P:', err);
+        });
         showToast('Transmissão iniciada com sucesso!', 'success');
       },
       (webcamStream) => {
@@ -435,6 +438,34 @@ socket.on('signal:ice-candidate', ({ fromId, candidate }) => {
   if (currentRole === 'host' && hostManager) {
     hostManager.handleIceCandidate(fromId, candidate);
   } else if (currentRole === 'viewer' && viewerManager) {
+    viewerManager.handleIceCandidate(candidate);
+  }
+});
+
+socket.on('sfu:publish-answer', ({ answer }) => {
+  if (currentRole === 'host' && hostManager) {
+    hostManager.handleSfuAnswer(answer);
+  }
+});
+
+socket.on('sfu:publish-ice', ({ candidate }) => {
+  if (currentRole === 'host' && hostManager) {
+    hostManager.handleSfuIce(candidate);
+  }
+});
+
+socket.on('sfu:publish-error', ({ message }) => {
+  console.warn('[SFU] Erro no servidor:', message);
+});
+
+socket.on('sfu:subscribe-offer', ({ offer, hasWebcam }) => {
+  if (currentRole === 'viewer' && viewerManager) {
+    viewerManager.handleOffer('sfu', offer, hasWebcam);
+  }
+});
+
+socket.on('sfu:subscribe-ice', ({ candidate }) => {
+  if (currentRole === 'viewer' && viewerManager) {
     viewerManager.handleIceCandidate(candidate);
   }
 });

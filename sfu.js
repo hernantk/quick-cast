@@ -66,12 +66,14 @@ function serializeDesc(desc) {
 
 function serializeCandidate(candidate) {
   if (!candidate) return null;
-  if (typeof candidate.toJSON === 'function') return candidate.toJSON();
+  const json = typeof candidate.toJSON === 'function' ? candidate.toJSON() : candidate;
+  const value = json && typeof json.toJSON === 'function' && json !== candidate ? json.toJSON() : json;
+  if (!value || (!value.candidate && value.sdpMid == null && value.sdpMLineIndex == null)) return null;
   return {
-    candidate: candidate.candidate,
-    sdpMid: candidate.sdpMid ?? null,
-    sdpMLineIndex: candidate.sdpMLineIndex ?? null,
-    usernameFragment: candidate.usernameFragment ?? null
+    candidate: value.candidate,
+    sdpMid: value.sdpMid ?? null,
+    sdpMLineIndex: value.sdpMLineIndex ?? null,
+    usernameFragment: value.usernameFragment ?? null
   };
 }
 
@@ -124,19 +126,38 @@ class SfuRoom {
   }
 
   attachPublisherEvents(socket) {
+    try {
+      this.publisherPc.onRemoteTransceiverAdded.subscribe((transceiver) => {
+        transceiver.onTrack.subscribe((track) => {
+          this.rememberTrack(track, transceiver);
+          this.forwardNewTrack(track).catch((err) => {
+            console.warn('[SFU] Falha ao replicar track nova:', err.message);
+          });
+        });
+      });
+    } catch (err) {
+      console.warn('[SFU] onRemoteTransceiverAdded indisponível:', err.message);
+    }
+
     this.publisherPc.ontrack = (event) => {
       const track = event.track;
-      const transceiver = event.transceiver || this.publisherPc.getTransceivers().find((t) => t.receiver?.track === track);
+      const transceiver = event.transceiver;
       this.rememberTrack(track, transceiver);
       this.forwardNewTrack(track).catch((err) => {
         console.warn('[SFU] Falha ao replicar track nova:', err.message);
       });
     };
 
-    this.publisherPc.onIceCandidate.subscribe((candidate) => {
+    const emitPublisherIce = (candidate) => {
       const payload = serializeCandidate(candidate);
       if (payload) socket.emit('sfu:publish-ice', { candidate: payload });
-    });
+    };
+
+    if (this.publisherPc.onIceCandidate?.subscribe) {
+      this.publisherPc.onIceCandidate.subscribe(emitPublisherIce);
+    } else {
+      this.publisherPc.onicecandidate = (event) => emitPublisherIce(event?.candidate);
+    }
 
     this.publisherPc.onconnectionstatechange = () => {
       console.log(`[SFU] Publisher ${this.roomId}: ${this.publisherPc.connectionState}`);
@@ -225,10 +246,16 @@ class SfuRoom {
       this.addPublishedTrackToPeer(pc, published);
     }
 
-    pc.onIceCandidate.subscribe((candidate) => {
+    const emitSubscriberIce = (candidate) => {
       const payload = serializeCandidate(candidate);
       if (payload) socket.emit('sfu:subscribe-ice', { candidate: payload });
-    });
+    };
+
+    if (pc.onIceCandidate?.subscribe) {
+      pc.onIceCandidate.subscribe(emitSubscriberIce);
+    } else {
+      pc.onicecandidate = (event) => emitSubscriberIce(event?.candidate);
+    }
 
     pc.onconnectionstatechange = () => {
       console.log(`[SFU] Espectador ${socket.id}: ${pc.connectionState}`);
