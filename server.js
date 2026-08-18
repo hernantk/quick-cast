@@ -16,7 +16,7 @@ const io = new Server(server, {
   }
 });
 
-const PORT = process.env.PORT || 3000;
+let PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 let activeTunnel = null;
 let publicTunnelUrl = null;
 
@@ -332,44 +332,77 @@ io.on('connection', (socket) => {
   });
 });
 
+// Função para iniciar o servidor na primeira porta disponível
+function startServer(portToTry) {
+  return new Promise((resolve, reject) => {
+    const onError = (err) => {
+      if (err.code === 'EADDRINUSE') {
+        console.log(`[Servidor] Porta ${portToTry} ocupada. Tentando a próxima porta disponível (${portToTry + 1})...`);
+        server.removeListener('listening', onListening);
+        server.removeListener('error', onError);
+        resolve(startServer(portToTry + 1));
+      } else {
+        server.removeListener('listening', onListening);
+        server.removeListener('error', onError);
+        reject(err);
+      }
+    };
+
+    const onListening = () => {
+      server.removeListener('error', onError);
+      PORT = server.address().port;
+      resolve(PORT);
+    };
+
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(portToTry);
+  });
+}
+
 // Inicialização do servidor
-server.listen(PORT, async () => {
-  console.log('\n======================================================');
-  console.log('🚀 SERVIDOR QUICKCAST (COMPARTILHAMENTO DE TELA) INICIADO!');
-  console.log('======================================================');
-  console.log(`👉 Acesso Local:    http://localhost:${PORT}`);
-  
-  const interfaces = os.networkInterfaces();
-  for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name]) {
-      if (iface.family === 'IPv4' && !iface.internal) {
-        console.log(`📱 Acesso na Rede:  http://${iface.address}:${PORT}`);
+startServer(PORT)
+  .then(async (actualPort) => {
+    console.log('\n======================================================');
+    console.log('🚀 SERVIDOR QUICKCAST (COMPARTILHAMENTO DE TELA) INICIADO!');
+    console.log('======================================================');
+    console.log(`👉 Acesso Local:    http://localhost:${actualPort}`);
+    
+    const interfaces = os.networkInterfaces();
+    for (const name of Object.keys(interfaces)) {
+      for (const iface of interfaces[name]) {
+        if (iface.family === 'IPv4' && !iface.internal) {
+          console.log(`📱 Acesso na Rede:  http://${iface.address}:${actualPort}`);
+        }
       }
     }
-  }
 
-  // Se foi passado argumento --tunnel ou variável de ambiente TUNNEL=true
-  if (process.argv.includes('--tunnel') || process.env.TUNNEL === 'true') {
-    try {
-      await enableTunnel();
-    } catch (e) {}
-  } else {
-    console.log('\n💡 Dica: Para gerar um link público seguro na internet, execute:');
-    console.log('   npm run online (ou clique no botão "🌐 Criar Link de Internet" na interface)');
-    console.log('======================================================\n');
-  }
+    // Se foi passado argumento --tunnel ou variável de ambiente TUNNEL=true
+    if (process.argv.includes('--tunnel') || process.env.TUNNEL === 'true') {
+      try {
+        await enableTunnel();
+      } catch (e) {}
+    } else {
+      console.log('\n💡 Dica: Para gerar um link público seguro na internet, execute:');
+      console.log('   npm run online (ou clique no botão "🌐 Criar Link de Internet" na interface)');
+      console.log('======================================================\n');
+    }
 
-  // Abrir navegador automaticamente se não for desativado via --no-open
-  if (!process.argv.includes('--no-open') && process.env.NODE_ENV !== 'test') {
-    const localUrl = `http://localhost:${PORT}`;
-    const startCmd = process.platform === 'darwin' ? 'open' :
-                     process.platform === 'win32' ? 'start ""' : 'xdg-open';
-    setTimeout(() => {
-      exec(`${startCmd} "${localUrl}"`, (err) => {
-        if (err) {
-          // Ignora caso não consiga abrir automaticamente
-        }
-      });
-    }, 500);
-  }
-});
+    // Abrir navegador automaticamente se não for desativado via --no-open
+    if (!process.argv.includes('--no-open') && process.env.NODE_ENV !== 'test') {
+      const localUrl = `http://localhost:${actualPort}`;
+      const startCmd = process.platform === 'darwin' ? 'open' :
+                       process.platform === 'win32' ? 'start ""' : 'xdg-open';
+      setTimeout(() => {
+        exec(`${startCmd} "${localUrl}"`, (err) => {
+          if (err) {
+            // Ignora caso não consiga abrir automaticamente
+          }
+        });
+      }, 500);
+    }
+  })
+  .catch((err) => {
+    console.error('Erro fatal ao iniciar servidor:', err);
+    process.exit(1);
+  });
