@@ -18,10 +18,10 @@ RUN node scripts/prepare-vendor.js
 
 # Define variáveis de ambiente padrão
 ENV NODE_ENV=production
-ENV PORT=3000
+ENV PORT=8900
 
-# Expõe a porta 3000
-EXPOSE 3000
+# Expõe a porta 8900
+EXPOSE 8900
 
 # Inicia o servidor com a flag --no-open para ambientes headless/servidor
 CMD ["node", "server.js", "--no-open"]

@@ -279,7 +279,7 @@ class HostManager {
   async startCapture({ quality = '1080p60', includeAudio = true, includeMic = false, includeWebcam = false }) {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
       if (!window.isSecureContext) {
-        throw new Error('O navegador bloqueia o compartilhamento de tela em conexões HTTP sem SSL. Acesse pelo endereço "http://localhost:' + (location.port || '3000') + '" ou gere um Link Seguro Cloudflare (HTTPS).');
+        throw new Error('O navegador bloqueia o compartilhamento de tela em conexões HTTP sem SSL. Acesse pelo endereço "http://localhost:' + (location.port || '8900') + '" ou gere um Link Seguro Cloudflare (HTTPS).');
       }
       throw new Error('Seu navegador não suporta compartilhamento de tela (getDisplayMedia). Utilize Google Chrome, Microsoft Edge, Firefox, Brave ou Opera.');
     }

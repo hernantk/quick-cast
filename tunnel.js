@@ -165,7 +165,7 @@ function startTunnel(options = {}) {
       return reject(err);
     }
 
-    const port = options.port || 3000;
+    const port = options.port || 8900;
     const targetUrl = `http://127.0.0.1:${port}`;
     const args = ['tunnel', '--url', targetUrl, '--no-autoupdate'];
 

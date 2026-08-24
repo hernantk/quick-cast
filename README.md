@@ -48,7 +48,7 @@ npm run online
 ```bash
 npm start
 ```
-*(Acesse `http://localhost:3000` ou pelo IP da rede exibido no terminal)*
+*(Acesse `http://localhost:8900` ou pelo IP da rede exibido no terminal)*
 
 ---
 

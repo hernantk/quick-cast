@@ -29,7 +29,7 @@ const io = new Server(server, {
   serveClient: false
 });
 
-let PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+let PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8900;
 let activeTunnel = null;
 let publicTunnelUrl = null;
 
