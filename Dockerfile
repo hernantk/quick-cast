@@ -5,7 +5,7 @@ FROM oven/bun:alpine
 WORKDIR /app
 
 # Copia manifestos de dependências
-COPY package.json bun.lockb ./
+COPY package.json bun.lock ./
 
 # Instala dependências de produção
 RUN bun install --frozen-lockfile --production
