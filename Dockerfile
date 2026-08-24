@@ -7,8 +7,8 @@ WORKDIR /app
 # Copia manifestos de dependências
 COPY package*.json ./
 
-# Instala dependências de produção (o postinstall já roda prepare-vendor.js)
-RUN npm ci --omit=dev
+# Instala dependências de produção
+RUN npm ci --omit=dev --ignore-scripts
 
 # Copia todo o código da aplicação
 COPY . .
