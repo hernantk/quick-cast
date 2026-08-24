@@ -8,8 +8,6 @@ let viewerManager = null;
 let currentStream = null;
 let isCoverFit = false;
 let isWebcamActive = false;
-let publicTunnelUrl = null;
-let isTunnelLoading = false;
 
 // Elementos do DOM
 const setupSection = document.getElementById('setupSection');
@@ -46,11 +44,6 @@ const pinModal = document.getElementById('pinModal');
 const modalPinInput = document.getElementById('modalPinInput');
 const volumeSlider = document.getElementById('volumeSlider');
 const volumeIcon = document.getElementById('volumeIcon');
-const tunnelToggleBtn = document.getElementById('tunnelToggleBtn');
-const tunnelBtnText = document.getElementById('tunnelBtnText');
-const cfBannerText = document.getElementById('cfBannerText');
-const cfBannerBtn = document.getElementById('cfBannerBtn');
-const cfConfirmModal = document.getElementById('cfConfirmModal');
 
 // 1. Inicialização ao carregar a página
 window.addEventListener('DOMContentLoaded', async () => {
@@ -81,18 +74,11 @@ function togglePinInput() {
   }
 }
 
-// Busca informações de rede e status do Túnel Cloudflare
+// Busca informações de rede
 async function fetchNetworkInfo() {
   try {
     const res = await fetch('/api/network-info');
     const data = await res.json();
-    
-    if (data.publicTunnelUrl) {
-      publicTunnelUrl = data.publicTunnelUrl;
-      updateTunnelUi(true);
-    } else {
-      updateTunnelUi(false);
-    }
 
     if (data.networkUrls && data.networkUrls.length > 0) {
       const net = data.networkUrls[0];
@@ -103,80 +89,6 @@ async function fetchNetworkInfo() {
   } catch (err) {
     networkIpText.innerText = 'Online';
   }
-}
-
-// Atualiza botões e indicadores do Cloudflare Tunnel
-function updateTunnelUi(isActive) {
-  if (isActive && publicTunnelUrl) {
-    tunnelToggleBtn.classList.add('active');
-    tunnelBtnText.innerText = `🌐 Online: ${publicTunnelUrl.replace('https://', '')}`;
-    if (cfBannerText) cfBannerText.innerHTML = `✅ <b>Link de Internet Ativo:</b> ${publicTunnelUrl}`;
-    if (cfBannerBtn) cfBannerBtn.innerText = 'Desativar';
-  } else {
-    tunnelToggleBtn.classList.remove('active');
-    tunnelBtnText.innerText = '🌐 Ativar Link de Internet (Cloudflare)';
-    if (cfBannerText) cfBannerText.innerText = 'Quer compartilhar com quem está em outra casa/cidade?';
-    if (cfBannerBtn) cfBannerBtn.innerText = 'Ativar Cloudflare';
-  }
-}
-
-// Ligar / Desligar Cloudflare Tunnel via 1 clique
-async function toggleCloudflareTunnel() {
-  if (isTunnelLoading) return;
-
-  if (publicTunnelUrl) {
-    // Solicita confirmação antes de desativar o link público
-    if (cfConfirmModal) {
-      cfConfirmModal.classList.add('active');
-    }
-  } else {
-    // Ativar túnel
-    isTunnelLoading = true;
-    showToast('Criando link seguro da Cloudflare... Aguarde alguns segundos.', 'info');
-    tunnelBtnText.innerText = '⏳ Gerando link Cloudflare...';
-    try {
-      const res = await fetch('/api/tunnel/start', { method: 'POST' });
-      const data = await res.json();
-      if (data.success && data.url) {
-        publicTunnelUrl = data.url;
-        updateTunnelUi(true);
-        showToast('Link de Internet criado com sucesso!', 'success');
-      } else {
-        throw new Error(data.error || 'Falha ao criar link');
-      }
-    } catch (err) {
-      console.error(err);
-      showToast('Erro ao iniciar Cloudflare: ' + err.message, 'error');
-      updateTunnelUi(false);
-    }
-    isTunnelLoading = false;
-  }
-}
-
-// Fechar modal de confirmação do Cloudflare
-function closeCfConfirmModal(event) {
-  if (!event || event.target === cfConfirmModal) {
-    if (cfConfirmModal) cfConfirmModal.classList.remove('active');
-  }
-}
-
-// Executa o encerramento do Cloudflare Tunnel após confirmação
-async function confirmDisableTunnel() {
-  closeCfConfirmModal();
-  if (isTunnelLoading) return;
-  isTunnelLoading = true;
-
-  showToast('Desativando link de internet...', 'info');
-  try {
-    await fetch('/api/tunnel/stop', { method: 'POST' });
-    publicTunnelUrl = null;
-    updateTunnelUi(false);
-    showToast('Link de internet desativado.', 'info');
-  } catch (e) {
-    showToast('Erro ao parar o túnel.', 'error');
-  }
-
-  isTunnelLoading = false;
 }
 
 // Verifica se há sala na URL (?room=XYZ ou /r/XYZ)
@@ -572,10 +484,9 @@ function updateVideoStats() {
   };
 }
 
-// Link de compartilhamento (usa Cloudflare URL pública se estiver ativo!)
+// Link de compartilhamento
 function getShareUrl() {
-  const base = publicTunnelUrl || window.location.origin;
-  return `${base}/?room=${currentRoomId}`;
+  return `${window.location.origin}/?room=${currentRoomId}`;
 }
 
 async function copyShareLink() {

@@ -102,7 +102,7 @@ async function main() {
     const checks = [
       { path: '/', test: (r) => r.status === 200 && r.body.includes('QuickCast') && r.body.includes('/js/socket.io.min.js') },
       { path: '/js/socket.io.min.js', test: (r) => r.status === 200 && r.body.includes('io') },
-      { path: '/js/app.js', test: (r) => r.status === 200 && r.body.includes('toggleCloudflareTunnel') },
+      { path: '/js/app.js', test: (r) => r.status === 200 && r.body.includes('fetchNetworkInfo') },
       { path: '/js/webrtc.js', test: (r) => r.status === 200 && r.body.includes('HostManager') },
       { path: '/css/style.css', test: (r) => r.status === 200 && r.body.length > 100 },
       { path: '/img/logo.svg', test: (r) => r.status === 200 },

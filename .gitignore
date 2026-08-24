@@ -21,9 +21,8 @@ coverage/
 dist/
 build/
 
-# Binários locais (ex.: cloudflared via untun)
+# Binários locais
 bin/
-cloudflared*
 
 # Sistema operacional
 .DS_Store

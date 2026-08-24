@@ -7,10 +7,9 @@ Um aplicativo moderno, leve e direto ao ponto para **compartilhar sua tela com �
 ## ✨ Recursos Principais
 
 - ⚡ **Zero Instalação para Visualizadores:** Basta enviar o link ou código de 6 dígitos. Funciona direto no navegador (Chrome, Edge, Firefox, Safari no PC ou celular).
-- 🌐 **Integração Cloudflare Tunnel (1 Clique):** Gere um link público seguro HTTPS (`https://xyz.trycloudflare.com`) direto na interface ou com 1 comando, sem precisar abrir portas no roteador (com modal de confirmação de segurança para desativar).
 - 🔒 **Proteção por Senha / PIN:** Crie salas públicas ou protegidas com senha para maior privacidade em reuniões e apresentações confidenciais.
 - 👤 **Webcam do Apresentador (PiP Flutuante):** Transmita a sua webcam junto com a tela em uma janela flutuante arrastável (Picture-in-Picture) com botão de ligar/desligar ao vivo.
-- 🚀 **Conexão WebRTC P2P:** Transmissão direta ponta-a-ponta entre você e os espectadores com latência ultrabaixa (< 150ms).
+- 🚀 **Conexão WebRTC P2P / SFU:** Transmissão direta de alta performance entre você e os espectadores com latência ultrabaixa (< 150ms).
 - 🎙️ **Mix de Áudio Inteligente:** Transmita o som do sistema/janela e, opcionalmente, seu microfone juntos na mesma transmissão.
 - 📱 **QR Code Integrado:** Escaneie com a câmera do celular para assistir imediatamente.
 - ⚙️ **Seletor de Qualidade:**
@@ -30,36 +29,23 @@ Um aplicativo moderno, leve e direto ao ponto para **compartilhar sua tela com �
 
 ---
 
-### Opção 2: Scripts Rápidos (.bat)
-- Clique duplo em **`iniciar-com-internet.bat`** (Inicia com link de internet Cloudflare automático)
-- Ou clique duplo em **`iniciar.bat`** (Para uso na mesma rede Wi-Fi / Local)
+### Opção 2: Script Rápido (.bat)
+- Clique duplo em **`iniciar.bat`** (Para uso na mesma rede Wi-Fi / Local)
 
 ---
 
-### Opção 2: Pelo Terminal
+### Opção 3: Pelo Terminal
 
-#### 🌐 Modo Online com Link de Internet (Recomendado)
-```bash
-npm run online
-```
-*(Gera automaticamente o link HTTPS da Cloudflare no terminal e conecta os espectadores de qualquer lugar do mundo)*
-
-#### 🏠 Modo Local / Wi-Fi
 ```bash
 npm start
 ```
-*(Acesse `http://localhost:8900` ou pelo IP da rede exibido no terminal)*
-
----
-
-### Opção 3: Ativar Cloudflare direto na Interface Web
-Se você iniciou o app com `npm start`, basta clicar no botão **`🌐 Ativar Link de Internet (Cloudflare)`** no topo da página ou no card de criação da sala. O sistema gerará o link seguro em tempo real e atualizará os botões de copiar e QR Code automaticamente!
+*(Acesse `http://localhost:8900` ou pelo IP da rede local exibido no terminal)*
 
 ---
 
 ## 🛠️ Tecnologias Utilizadas
  
-- **Backend:** Node.js, Express, Socket.IO, `untun` (Cloudflare Tunnel nativo).
+- **Backend:** Node.js, Express, Socket.IO, Werift (SFU WebRTC nativo).
 - **Frontend:** Vanilla JavaScript moderno, WebRTC dual-stream (`RTCPeerConnection`, `getDisplayMedia`, `getUserMedia`, `AudioContext` mix), CSS3 com Glassmorphism.
 - **STUN:** Servidores públicos do Google STUN para transposição de NAT ultrarrápida.
 
