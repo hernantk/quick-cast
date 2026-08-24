@@ -1,20 +1,20 @@
-# Imagem base oficial do Node.js LTS leve
-FROM node:22-alpine
+# Imagem base oficial do Bun leve
+FROM oven/bun:alpine
 
 # Define diretório de trabalho
 WORKDIR /app
 
 # Copia manifestos de dependências
-COPY package*.json ./
+COPY package.json bun.lockb ./
 
 # Instala dependências de produção
-RUN npm ci --omit=dev --ignore-scripts
+RUN bun install --frozen-lockfile --production
 
 # Copia todo o código da aplicação
 COPY . .
 
 # Garante que os assets de vendor estejam atualizados
-RUN node scripts/prepare-vendor.js
+RUN bun scripts/prepare-vendor.js
 
 # Define variáveis de ambiente padrão
 ENV NODE_ENV=production
@@ -24,4 +24,4 @@ ENV PORT=8900
 EXPOSE 8900
 
 # Inicia o servidor com a flag --no-open para ambientes headless/servidor
-CMD ["node", "server.js", "--no-open"]
+CMD ["bun", "server.js", "--no-open"]

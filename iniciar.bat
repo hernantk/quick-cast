@@ -4,5 +4,5 @@ cls
 echo ======================================================
 echo    Iniciando QuickCast (Modo Local / Rede Wi-Fi)
 echo ======================================================
-npm start
+bun start
 pause

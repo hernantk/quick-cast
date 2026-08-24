@@ -23,7 +23,7 @@ Um aplicativo moderno, leve e direto ao ponto para **compartilhar sua tela com �
 
 ## 🚀 Como Executar
 
-### Opção 1: Executável Windows Standalone (`.exe` - Sem precisar de Node.js)
+### Opção 1: Executável Windows Standalone (`.exe` - Sem precisar de Bun/Node)
 - Baixe o **`quickcast.exe`** direto na aba de [**Releases do GitHub**](https://github.com/hernantk/nao-fa-a-o-l/releases).
 - Dê um duplo clique no arquivo `.exe`. O servidor iniciará e abrirá automaticamente seu navegador!
 
@@ -37,7 +37,7 @@ Um aplicativo moderno, leve e direto ao ponto para **compartilhar sua tela com �
 ### Opção 3: Pelo Terminal
 
 ```bash
-npm start
+bun start
 ```
 *(Acesse `http://localhost:8900` ou pelo IP da rede local exibido no terminal)*
 
@@ -45,7 +45,7 @@ npm start
 
 ## 🛠️ Tecnologias Utilizadas
  
-- **Backend:** Node.js, Express, Socket.IO, Werift (SFU WebRTC nativo).
+- **Backend:** Bun, Express, Socket.IO, Werift (SFU WebRTC nativo).
 - **Frontend:** Vanilla JavaScript moderno, WebRTC dual-stream (`RTCPeerConnection`, `getDisplayMedia`, `getUserMedia`, `AudioContext` mix), CSS3 com Glassmorphism.
 - **STUN:** Servidores públicos do Google STUN para transposição de NAT ultrarrápida.
 
@@ -56,7 +56,7 @@ npm start
 Para compilar um novo executável autônomo:
 
 ```bash
-npm run build:exe
+bun run build:exe
 ```
 O executável gerado estará na pasta `dist/quickcast.exe`.
 
@@ -67,4 +67,5 @@ Ao criar e enviar uma tag Git para o repositório, o GitHub Actions gera o execu
 git tag v1.0.0
 git push origin v1.0.0
 ```
+
 

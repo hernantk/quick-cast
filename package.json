@@ -3,35 +3,12 @@
   "version": "1.0.0",
   "description": "QuickCast - Compartilhamento de Tela Ultrarrápido e Leve",
   "main": "server.js",
-  "bin": "server.js",
-  "pkg": {
-    "assets": [
-      "public/**/*",
-      "node_modules/socket.io/client-dist/**/*",
-      "node_modules/socket.io/package.json"
-    ],
-    "scripts": [
-      "sfu.js",
-      "node_modules/werift/lib/**/*.js",
-      "node_modules/@noble/curves/**/*.js",
-      "node_modules/@noble/hashes/**/*.js",
-      "node_modules/@peculiar/x509/**/*.js",
-      "node_modules/@fidm/x509/**/*.js"
-    ],
-    "targets": [
-      "node24-win-x64",
-      "node24-linux-x64",
-      "node24-macos-x64"
-    ],
-    "outputPath": "dist"
-  },
   "scripts": {
-    "postinstall": "node scripts/prepare-vendor.js",
-    "start": "node server.js",
-    "dev": "node --watch server.js",
-    "build:exe": "node scripts/prepare-vendor.js && pkg . --targets node24-win-x64 --output dist/quickcast.exe --public --no-bytecode --public-packages \"*\"",
-    "build:all": "node scripts/prepare-vendor.js && pkg . --targets node24-win-x64,node24-linux-x64,node24-macos-x64 --out-path dist --public --no-bytecode --public-packages \"*\"",
-    "test:exe": "node scripts/test-exe.js"
+    "postinstall": "bun scripts/prepare-vendor.js",
+    "start": "bun server.js",
+    "dev": "bun --watch server.js",
+    "build:exe": "bun scripts/prepare-vendor.js && bun build --compile --minify --outfile dist/quickcast server.js",
+    "test:exe": "bun scripts/test-exe.js"
   },
   "keywords": [
     "screen-sharing",
@@ -40,14 +17,10 @@
   ],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
     "express": "^5.2.1",
     "qrcode": "^1.5.4",
     "socket.io": "^4.8.3",
     "werift": "^0.24.4"
-  },
-  "devDependencies": {
-    "@yao-pkg/pkg": "^6.22.0"
   }
 }
