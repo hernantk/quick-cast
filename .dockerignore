@@ -1,0 +1,12 @@
+node_modules
+dist
+.git
+.github
+*.log
+.env
+.env.*
+dist/
+build/
+*.exe
+iniciar.bat
+iniciar-com-internet.bat
