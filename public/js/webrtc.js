@@ -1,12 +1,16 @@
-// Configuração WebRTC e STUN Servers gratuitos do Google
+// Configuração WebRTC, STUN Servers (Cloudflare + Google) e Otimizações de Latência
 const rtcConfig = {
   iceServers: [
+    { urls: 'stun:stun.cloudflare.com:3478' },
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
     { urls: 'stun:stun3.l.google.com:19302' },
     { urls: 'stun:stun4.l.google.com:19302' }
-  ]
+  ],
+  iceCandidatePoolSize: 2,
+  bundlePolicy: 'max-bundle',
+  rtcpMuxPolicy: 'require'
 };
 
 // Perfis de qualidade de vídeo da tela (captura)
@@ -291,7 +295,7 @@ class HostManager {
     try {
       let displayStream;
       try {
-        // 1. Capturar Tela com áudio avançado
+        // 1. Capturar Tela com áudio avançado e exclusão de superfície própria
         displayStream = await navigator.mediaDevices.getDisplayMedia({
           video: {
             ...videoConstraints,
@@ -300,8 +304,14 @@ class HostManager {
           audio: includeAudio ? {
             echoCancellation: false,
             noiseSuppression: false,
-            autoGainControl: false
-          } : false
+            autoGainControl: false,
+            channelCount: 2,
+            sampleRate: 48000
+          } : false,
+          selfBrowserSurface: 'exclude',
+          surfaceSwitching: 'include',
+          systemAudio: includeAudio ? 'include' : 'exclude',
+          preferCurrentTab: false
         });
       } catch (captureErr) {
         if (captureErr.name === 'NotAllowedError') {
@@ -314,7 +324,10 @@ class HostManager {
               ...videoConstraints,
               cursor: 'always'
             },
-            audio: !!includeAudio
+            audio: !!includeAudio,
+            selfBrowserSurface: 'exclude',
+            surfaceSwitching: 'include',
+            systemAudio: includeAudio ? 'include' : 'exclude'
           });
         } catch (fallbackErr) {
           if (fallbackErr.name === 'NotAllowedError') {
@@ -644,6 +657,20 @@ class ViewerManager {
     this.peer.ontrack = (event) => {
       console.log('[WebRTC Viewer] Track recebida:', event.track.kind, event.streams[0]?.id);
 
+      // Otimização de Latência Zero (Jitter Buffer mínimo / Playout instantâneo)
+      if (event.receiver) {
+        try {
+          if ('jitterBufferTarget' in event.receiver) {
+            event.receiver.jitterBufferTarget = 0;
+          }
+        } catch (e) {}
+        try {
+          if ('playoutDelayHint' in event.receiver) {
+            event.receiver.playoutDelayHint = 0;
+          }
+        } catch (e) {}
+      }
+
       if (event.track.kind === 'audio') {
         if (![...this.screenStream.getAudioTracks()].some((t) => t.id === event.track.id)) {
           this.screenStream.addTrack(event.track);
@@ -713,6 +740,18 @@ class ViewerManager {
 
     await this.peer.setRemoteDescription(new RTCSessionDescription(offer));
     preferEfficientVideoCodecs(this.peer);
+
+    if (typeof this.peer.getReceivers === 'function') {
+      this.peer.getReceivers().forEach((receiver) => {
+        try {
+          if ('jitterBufferTarget' in receiver) receiver.jitterBufferTarget = 0;
+        } catch (e) {}
+        try {
+          if ('playoutDelayHint' in receiver) receiver.playoutDelayHint = 0;
+        } catch (e) {}
+      });
+    }
+
     const answer = await this.peer.createAnswer();
     await this.peer.setLocalDescription(answer);
     this.emitAnswer(answer);

@@ -7,7 +7,6 @@ const { exec, spawn } = require('child_process');
 const QRCode = require('qrcode');
 const fs = require('fs');
 const { SfuManager } = require('./sfu');
-const { startTunnel } = require('./tunnel');
 
 const isPackaged = typeof process.pkg !== 'undefined';
 const publicDir = path.join(__dirname, 'public');
@@ -30,8 +29,6 @@ const io = new Server(server, {
 });
 
 let PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8900;
-let activeTunnel = null;
-let publicTunnelUrl = null;
 
 const PUBLIC_MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -105,68 +102,6 @@ app.use((req, res, next) => {
 });
 app.use(express.json());
 
-// Função para iniciar Túnel Cloudflare
-async function enableTunnel() {
-  if (activeTunnel && publicTunnelUrl) return publicTunnelUrl;
-  try {
-    console.log('[Cloudflare] Criando túnel seguro gratuito (Cloudflare Quick Tunnel)...');
-    activeTunnel = await startTunnel({ port: PORT });
-    publicTunnelUrl = await activeTunnel.getURL();
-    console.log('\n======================================================');
-    console.log('🌐 LINK DE INTERNET ATIVO (CLOUDFLARE HTTPS):');
-    console.log(`👉 ${publicTunnelUrl}`);
-    console.log('======================================================\n');
-    return publicTunnelUrl;
-  } catch (err) {
-    console.error('[Cloudflare] Erro ao criar túnel:', err.message);
-    activeTunnel = null;
-    publicTunnelUrl = null;
-    throw err;
-  }
-}
-
-// Função para desativar Túnel Cloudflare
-async function disableTunnel() {
-  if (activeTunnel) {
-    try {
-      await activeTunnel.close();
-    } catch (e) {}
-    activeTunnel = null;
-    publicTunnelUrl = null;
-    console.log('[Cloudflare] Túnel desativado.');
-  }
-}
-
-// Prevenir que o fechamento do processo filho do cloudflared gere crash no Node
-process.on('uncaughtException', (err) => {
-  if (err && err.message && err.message.includes('cloudflared')) {
-    return;
-  }
-  console.error('Erro não tratado:', err);
-});
-
-// Rotas de controle do Túnel
-app.get('/api/tunnel/status', (req, res) => {
-  res.json({
-    active: !!activeTunnel,
-    url: publicTunnelUrl
-  });
-});
-
-app.post('/api/tunnel/start', async (req, res) => {
-  try {
-    const url = await enableTunnel();
-    res.json({ success: true, url });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-app.post('/api/tunnel/stop', async (req, res) => {
-  await disableTunnel();
-  res.json({ success: true });
-});
-
 // Gerar QR Code via endpoint simples
 app.get('/api/qr', async (req, res) => {
   const text = req.query.text;
@@ -189,7 +124,7 @@ app.get('/api/qr', async (req, res) => {
   }
 });
 
-// Endpoint com informações de rede da máquina e status da internet
+// Endpoint com informações de rede da máquina
 app.get('/api/network-info', (req, res) => {
   const interfaces = os.networkInterfaces();
   const addresses = [];
@@ -209,9 +144,7 @@ app.get('/api/network-info', (req, res) => {
   res.json({
     port: PORT,
     localUrl: `http://localhost:${PORT}`,
-    networkUrls: addresses,
-    tunnelActive: !!activeTunnel,
-    publicTunnelUrl: publicTunnelUrl
+    networkUrls: addresses
   });
 });
 
@@ -457,23 +390,10 @@ startServer(PORT)
       }
     }
 
-    // Se foi passado argumento --tunnel ou variável de ambiente TUNNEL=true
-    if (process.argv.includes('--tunnel') || process.env.TUNNEL === 'true') {
-      try {
-        await enableTunnel();
-      } catch (e) {}
-    } else if (isPackaged) {
-      console.log('\n💡 Dica: Clique em "Ativar Link de Internet" na interface para gerar um link público HTTPS.');
-      console.log('======================================================\n');
-    } else {
-      console.log('\n💡 Dica: Para gerar um link público seguro na internet, execute:');
-      console.log('   npm run online (ou clique no botão "🌐 Criar Link de Internet" na interface)');
-      console.log('======================================================\n');
-    }
-
     if (isPackaged) {
       console.log('[QuickCast] Rodando como executável empacotado.');
     }
+    console.log('======================================================\n');
 
     // Abrir navegador automaticamente se não for desativado via --no-open
     if (!process.argv.includes('--no-open') && process.env.NODE_ENV !== 'test') {

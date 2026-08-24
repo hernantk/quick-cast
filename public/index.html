@@ -23,16 +23,6 @@
     </a>
 
     <div class="nav-right">
-      <!-- Botão 1-Clique Cloudflare Tunnel -->
-      <button class="tunnel-btn" id="tunnelToggleBtn" onclick="toggleCloudflareTunnel()" title="Gerar link público seguro HTTPS para compartilhar com qualquer pessoa na internet">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="10"></circle>
-          <line x1="2" y1="12" x2="22" y2="12"></line>
-          <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
-        </svg>
-        <span id="tunnelBtnText">🌐 Ativar Link de Internet (Cloudflare)</span>
-      </button>
-
       <div class="network-status" id="networkStatusBadge">
         <div class="status-dot"></div>
         <span id="networkIpText">Pronto para conectar</span>
@@ -81,17 +71,6 @@
             <div class="card-title">Criar Sala de Transmissão</div>
             <div class="card-desc">Escolha as preferências e inicie o compartilhamento</div>
           </div>
-        </div>
-
-        <!-- Banner Cloudflare -->
-        <div class="cf-banner" id="cfSetupBanner">
-          <div style="display: flex; align-items: center; gap: 0.5rem;">
-            <span>🌐</span>
-            <span id="cfBannerText">Quer compartilhar com quem está em outra casa/cidade?</span>
-          </div>
-          <button class="btn btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 0.8rem;" id="cfBannerBtn" onclick="toggleCloudflareTunnel()">
-            Ativar Cloudflare
-          </button>
         </div>
 
         <div class="form-group">
@@ -324,28 +303,6 @@
       <div style="display: flex; gap: 0.75rem; width: 100%;">
         <button class="btn btn-secondary" style="flex: 1;" onclick="cancelPinModal()">Cancelar</button>
         <button class="btn btn-primary" style="flex: 1;" onclick="submitPinModal()">Entrar</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Modal Confirmação de Encerramento do Cloudflare Tunnel -->
-  <div class="modal-backdrop" id="cfConfirmModal" onclick="closeCfConfirmModal(event)">
-    <div class="modal-card" onclick="event.stopPropagation()">
-      <div class="card-icon" style="background: rgba(244, 129, 32, 0.15); color: var(--cloudflare);">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
-          <line x1="12" y1="9" x2="12" y2="13"></line>
-          <line x1="12" y1="17" x2="12.01" y2="17"></line>
-        </svg>
-      </div>
-      <h3 style="font-size: 1.3rem;">Desativar Link de Internet?</h3>
-      <p style="color: var(--text-muted); font-size: 0.9rem;">
-        Ao desativar o link público da Cloudflare, <b>espectadores que estiverem assistindo pela internet serão desconectados</b>.
-      </p>
-      
-      <div style="display: flex; gap: 0.75rem; width: 100%; margin-top: 0.5rem;">
-        <button class="btn btn-secondary" style="flex: 1;" onclick="closeCfConfirmModal()">Manter Ativo</button>
-        <button class="btn btn-danger" style="flex: 1;" onclick="confirmDisableTunnel()">Sim, Desativar</button>
       </div>
     </div>
   </div>

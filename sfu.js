@@ -74,7 +74,10 @@ function icePortRange() {
 
 function peerConfig() {
   return {
-    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+    iceServers: [
+      { urls: 'stun:stun.cloudflare.com:3478' },
+      { urls: 'stun:stun.l.google.com:19302' }
+    ],
     iceAdditionalHostAddresses: localHostAddresses(),
     icePortRange: icePortRange(),
     iceUseTcp: true,

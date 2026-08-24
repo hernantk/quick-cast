@@ -12,7 +12,6 @@
     ],
     "scripts": [
       "sfu.js",
-      "tunnel.js",
       "node_modules/werift/lib/**/*.js",
       "node_modules/@noble/curves/**/*.js",
       "node_modules/@noble/hashes/**/*.js",
@@ -29,9 +28,7 @@
   "scripts": {
     "postinstall": "node scripts/prepare-vendor.js",
     "start": "node server.js",
-    "online": "node server.js --tunnel",
     "dev": "node --watch server.js",
-    "tunnel": "node server.js --tunnel",
     "build:exe": "node scripts/prepare-vendor.js && pkg . --targets node24-win-x64 --output dist/quickcast.exe --public --no-bytecode --public-packages \"*\"",
     "build:all": "node scripts/prepare-vendor.js && pkg . --targets node24-win-x64,node24-linux-x64,node24-macos-x64 --out-path dist --public --no-bytecode --public-packages \"*\"",
     "test:exe": "node scripts/test-exe.js"
@@ -39,8 +36,7 @@
   "keywords": [
     "screen-sharing",
     "webrtc",
-    "p2p",
-    "cloudflare-tunnel"
+    "p2p"
   ],
   "author": "",
   "license": "ISC",
