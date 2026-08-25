@@ -45,10 +45,59 @@ const {
   useOPUS,
   useNACK,
   usePLI,
-  useREMB
+  useREMB,
+  useTWCC,
+  useSdesMid,
+  useAbsSendTime,
+  useTransportWideCC,
+  useAudioLevelIndication,
+  useDependencyDescriptor
 } = werift;
 
-const RTCP_VIDEO = [useNACK(), usePLI(), useREMB()];
+// NACK+PLI para recuperacao, REMB+TWCC para estimativa de banda.
+const RTCP_VIDEO = [useNACK(), usePLI(), useREMB(), useTWCC()];
+
+// O werift nao negocia nenhuma extensao de cabecalho por padrao. Sem
+// transport-cc/abs-send-time o navegador transmite "as cegas": nao recebe
+// feedback de congestionamento e nao consegue ajustar o bitrate, o que gera
+// picos de banda e bufferbloat. Habilitar as extensoes e o que torna o
+// controle de congestionamento do Chrome/Firefox funcional contra o SFU.
+function headerExtensions() {
+  return {
+    audio: [useSdesMid(), useAudioLevelIndication(), useTransportWideCC(), useAbsSendTime()],
+    video: [useSdesMid(), useTransportWideCC(), useAbsSendTime(), useDependencyDescriptor()]
+  };
+}
+
+// Os helpers do werift (useVP9/useVP8/useH264) trazem apenas nack+pli+remb.
+// Sem transport-cc no rtcp-fb o navegador nao envia relatorios TWCC e volta a
+// depender so do REMB, que reage devagar demais para tela em movimento.
+function withFeedback(codec) {
+  return new RTCRtpCodecParameters({
+    mimeType: codec.mimeType,
+    clockRate: codec.clockRate,
+    channels: codec.channels,
+    payloadType: codec.payloadType,
+    parameters: codec.parameters,
+    rtcpFeedback: RTCP_VIDEO
+  });
+}
+
+function videoCodecs() {
+  return [useVP9(), useVP8(), useH264(), useAV1X()]
+    .flat()
+    .map(withFeedback)
+    .concat(
+      new RTCRtpCodecParameters({
+        mimeType: 'video/AV1',
+        clockRate: 90000,
+        rtcpFeedback: RTCP_VIDEO
+      })
+    );
+}
+
+// Intervalo minimo entre pedidos de keyframe para a mesma track.
+const KEYFRAME_MIN_INTERVAL_MS = 1000;
 
 function localHostAddresses() {
   const addresses = ['127.0.0.1'];
@@ -81,19 +130,10 @@ function peerConfig() {
     iceAdditionalHostAddresses: localHostAddresses(),
     icePortRange: icePortRange(),
     iceUseTcp: true,
+    headerExtensions: headerExtensions(),
     codecs: {
       audio: [useOPUS()],
-      video: [
-        useVP9(),
-        useVP8(),
-        useH264(),
-        new RTCRtpCodecParameters({
-          mimeType: 'video/AV1',
-          clockRate: 90000,
-          rtcpFeedback: RTCP_VIDEO
-        }),
-        useAV1X()
-      ]
+      video: videoCodecs()
     }
   };
 }
@@ -128,7 +168,6 @@ class SfuRoom {
     this.tracks = [];
     this.subscribers = new Map();
     this.expected = { video: 1, audio: 0 };
-    this.pliTimer = null;
   }
 
   hasMedia() {
@@ -141,19 +180,30 @@ class SfuRoom {
     const started = Date.now();
     while (Date.now() - started < timeoutMs) {
       if (this.hasMedia()) return true;
-      await sleep(100);
+      await sleep(30);
     }
     return this.tracks.some((t) => t.kind === 'video');
   }
 
-  startPli() {
-    if (this.pliTimer) return;
-    this.pliTimer = setInterval(() => {
-      for (const published of this.tracks) {
-        if (published.kind !== 'video' || !published.track?.ssrc || !published.transceiver) continue;
-        published.transceiver.receiver.sendRtcpPLI(published.track.ssrc).catch(() => {});
-      }
-    }, 2000);
+  // Um keyframe de tela 1080p custa centenas de KB. Pedi-los em intervalo fixo
+  // multiplica a banda do publisher sem beneficio nenhum: keyframe so e
+  // necessario quando alguem entra ou quando um espectador perde o quadro de
+  // referencia (PLI). O throttle evita rajadas quando varios pedem de uma vez.
+  requestKeyframe(published) {
+    if (!published || published.kind !== 'video') return;
+    if (!published.track?.ssrc || !published.transceiver) return;
+
+    const now = Date.now();
+    if (published.lastKeyframeAt && now - published.lastKeyframeAt < KEYFRAME_MIN_INTERVAL_MS) return;
+    published.lastKeyframeAt = now;
+
+    published.transceiver.receiver.sendRtcpPLI(published.track.ssrc).catch(() => {});
+  }
+
+  requestKeyframeAll() {
+    for (const published of this.tracks) {
+      this.requestKeyframe(published);
+    }
   }
 
   rememberTrack(track, transceiver) {
@@ -213,7 +263,6 @@ class SfuRoom {
     if (!this.publisherPc) {
       this.publisherPc = new RTCPeerConnection(peerConfig());
       this.attachPublisherEvents(socket);
-      this.startPli();
     }
 
     await this.publisherPc.setRemoteDescription(offer);
@@ -234,11 +283,8 @@ class SfuRoom {
   addPublishedTrackToPeer(pc, published) {
     const sender = pc.addTrack(published.track);
     if (published.kind === 'video' && sender?.onPictureLossIndication) {
-      sender.onPictureLossIndication.subscribe(() => {
-        if (published.track?.ssrc && published.transceiver) {
-          published.transceiver.receiver.sendRtcpPLI(published.track.ssrc).catch(() => {});
-        }
-      });
+      // Repassa o PLI do espectador ao publisher (throttled).
+      sender.onPictureLossIndication.subscribe(() => this.requestKeyframe(published));
     }
     return sender;
   }
@@ -307,11 +353,19 @@ class SfuRoom {
       hasWebcam: this.tracks.some((t) => t.label === 'webcam')
     });
 
-    for (const published of this.tracks) {
-      if (published.kind === 'video' && published.track?.ssrc && published.transceiver) {
-        published.transceiver.receiver.sendRtcpPLI(published.track.ssrc).catch(() => {});
+    // Bootstrap: o espectador so decodifica a partir de um keyframe. Pedimos um
+    // agora e repetimos uma vez depois da negociacao, caso o primeiro tenha
+    // chegado antes do peer estar pronto para receber.
+    // O espectador pode ter desconectado durante as negociacoes acima.
+    const sub = this.subscribers.get(socket.id);
+    if (!sub) return false;
+
+    this.requestKeyframeAll();
+    sub.bootstrapTimer = setTimeout(() => {
+      if (this.subscribers.get(socket.id) === sub && sub.pc.connectionState !== 'closed') {
+        this.requestKeyframeAll();
       }
-    }
+    }, 1200);
 
     return true;
   }
@@ -336,17 +390,13 @@ class SfuRoom {
     const sub = this.subscribers.get(viewerId);
     if (!sub) return;
     this.subscribers.delete(viewerId);
+    if (sub.bootstrapTimer) clearTimeout(sub.bootstrapTimer);
     try {
       await sub.pc.close();
     } catch (e) {}
   }
 
   async close() {
-    if (this.pliTimer) {
-      clearInterval(this.pliTimer);
-      this.pliTimer = null;
-    }
-
     for (const viewerId of [...this.subscribers.keys()]) {
       await this.removeSubscriber(viewerId);
     }

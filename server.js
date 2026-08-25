@@ -6,6 +6,7 @@ const path = require('path');
 const { exec, spawn } = require('child_process');
 const QRCode = require('qrcode');
 const fs = require('fs');
+const zlib = require('zlib');
 const { SfuManager } = require('./sfu');
 
 const isPackaged = typeof process.pkg !== 'undefined';
@@ -25,7 +26,14 @@ const io = new Server(server, {
     methods: ['GET', 'POST']
   },
   // O cliente fica em public/js/socket.io.min.js — evita createReadStream no snapshot do pkg
-  serveClient: false
+  serveClient: false,
+  // Ofertas/respostas SDP sao alguns KB de texto e comprimem muito bem.
+  perMessageDeflate: { threshold: 1024 },
+  httpCompression: { threshold: 1024 },
+  // WebSocket primeiro: evita o handshake por long-polling e o upgrade
+  // posterior, cortando um par de round-trips na entrada de cada espectador.
+  // A lista mantem polling como fallback em redes que bloqueiam WebSocket.
+  transports: ['websocket', 'polling']
 });
 
 let PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8900;
@@ -44,7 +52,40 @@ const PUBLIC_MIME = {
   '.map': 'application/json'
 };
 
-function sendPublicFile(relPath, res) {
+// Tipos que valem a pena comprimir (png/svg-ja-comprimido ficam de fora).
+const COMPRESSIBLE = new Set(['.html', '.js', '.css', '.svg', '.json', '.map']);
+
+// Assets sao lidos e comprimidos uma unica vez. O conjunto e pequeno (~120 KB)
+// e nao muda enquanto o servidor roda, inclusive no executavel empacotado.
+const assetCache = new Map();
+
+function loadAsset(filePath, ext) {
+  const stat = fs.statSync(filePath);
+  const cached = assetCache.get(filePath);
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached;
+
+  const body = fs.readFileSync(filePath);
+  const asset = {
+    body,
+    mtimeMs: stat.mtimeMs,
+    size: stat.size,
+    type: PUBLIC_MIME[ext] || 'application/octet-stream',
+    etag: `W/"${stat.size.toString(16)}-${Math.round(stat.mtimeMs).toString(16)}"`,
+    gzip: null
+  };
+
+  if (COMPRESSIBLE.has(ext) && body.length >= 1024) {
+    try {
+      const gzipped = zlib.gzipSync(body, { level: zlib.constants.Z_BEST_COMPRESSION });
+      if (gzipped.length < body.length) asset.gzip = gzipped;
+    } catch (e) {}
+  }
+
+  assetCache.set(filePath, asset);
+  return asset;
+}
+
+function sendPublicFile(relPath, req, res) {
   const candidate = relPath === '/' ? 'index.html' : relPath.replace(/^\/+/, '');
   if (!candidate || candidate.includes('..') || path.isAbsolute(candidate)) return false;
 
@@ -54,16 +95,42 @@ function sendPublicFile(relPath, res) {
 
   try {
     if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return false;
+
     const ext = path.extname(filePath).toLowerCase();
-    res.setHeader('Content-Type', PUBLIC_MIME[ext] || 'application/octet-stream');
-    res.send(fs.readFileSync(filePath));
+    const asset = loadAsset(filePath, ext);
+
+    res.setHeader('Content-Type', asset.type);
+    res.setHeader('ETag', asset.etag);
+    res.setHeader('Vary', 'Accept-Encoding');
+    // O HTML sempre revalida (a sala muda); o resto pode ficar em cache e cair
+    // para um 304 vazio nas visitas seguintes.
+    res.setHeader('Cache-Control', ext === '.html' ? 'no-cache' : 'public, max-age=3600');
+
+    if (req.headers['if-none-match'] === asset.etag) {
+      res.status(304).end();
+      return true;
+    }
+
+    const acceptsGzip = (req.headers['accept-encoding'] || '')
+      .split(',')
+      .some((part) => part.trim().toLowerCase().split(';')[0] === 'gzip');
+    if (asset.gzip && acceptsGzip) {
+      res.setHeader('Content-Encoding', 'gzip');
+      res.setHeader('Content-Length', asset.gzip.length);
+      res.end(req.method === 'HEAD' ? undefined : asset.gzip);
+      return true;
+    }
+
+    res.setHeader('Content-Length', asset.body.length);
+    res.end(req.method === 'HEAD' ? undefined : asset.body);
     return true;
   } catch (e) {
     return false;
   }
 }
 
-function sendIndexHtml(res) {
+function sendIndexHtml(req, res) {
+  if (sendPublicFile('/', req, res)) return;
   try {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(fs.readFileSync(path.join(publicDir, 'index.html')));
@@ -92,14 +159,15 @@ function openBrowser(url) {
   }
 }
 
-// Servir arquivos estáticos da pasta public
-app.use(express.static(publicDir));
+// Servir arquivos estáticos da pasta public (com gzip + ETag).
+// Precisa vir ANTES do express.static, que responderia sem compressão.
 app.use((req, res, next) => {
   if (req.method !== 'GET' && req.method !== 'HEAD') return next();
   if (req.path.startsWith('/api/') || req.path.startsWith('/socket.io')) return next();
-  if (sendPublicFile(req.path, res)) return;
+  if (sendPublicFile(req.path, req, res)) return;
   next();
 });
+app.use(express.static(publicDir));
 app.use(express.json());
 
 // Gerar QR Code via endpoint simples
@@ -150,7 +218,7 @@ app.get('/api/network-info', (req, res) => {
 
 // Redirecionamento amigável para sala
 app.get('/r/:roomId', (req, res) => {
-  sendIndexHtml(res);
+  sendIndexHtml(req, res);
 });
 
 // Gerenciamento de Salas em memória

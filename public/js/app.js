@@ -1,5 +1,10 @@
 // Socket.IO e Estado da Aplicação
-const socket = io();
+// WebSocket primeiro (sem o handshake por long-polling), com queda
+// automatica para polling se a rede bloquear WebSocket.
+const socket = io({
+  transports: ['websocket', 'polling'],
+  tryAllTransports: true
+});
 
 let currentRole = null; // 'host' | 'viewer' | null
 let currentRoomId = null;

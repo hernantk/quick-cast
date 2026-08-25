@@ -8,7 +8,8 @@ const rtcConfig = {
     { urls: 'stun:stun3.l.google.com:19302' },
     { urls: 'stun:stun4.l.google.com:19302' }
   ],
-  iceCandidatePoolSize: 2,
+  // Pre-coleta candidatos antes da oferta: encurta o handshake ICE.
+  iceCandidatePoolSize: 4,
   bundlePolicy: 'max-bundle',
   rtcpMuxPolicy: 'require'
 };
@@ -48,27 +49,120 @@ const ENCODING_PROFILES = {
   '1080p30': {
     maxBitrate: 3_500_000,
     maxFramerate: 30,
-    contentHint: 'detail',
+    contentHint: 'text',
     degradationPreference: 'maintain-resolution'
   },
   '720p30': {
     maxBitrate: 1_800_000,
     maxFramerate: 30,
-    contentHint: 'detail',
+    contentHint: 'text',
     degradationPreference: 'maintain-resolution'
   },
   '4k30': {
     maxBitrate: 10_000_000,
     maxFramerate: 30,
-    contentHint: 'detail',
+    contentHint: 'text',
     degradationPreference: 'maintain-resolution'
   }
 };
 
 const AUDIO_MAX_BITRATE = 128_000;
+const SPEECH_MAX_BITRATE = 48_000;
 const WEBCAM_MAX_BITRATE = 350_000;
 const WEBCAM_MAX_FRAMERATE = 15;
 const VIDEO_CODEC_PREFERENCE = ['video/AV1', 'video/VP9', 'video/H264', 'video/VP8'];
+
+// L1T3 = uma camada espacial, tres camadas temporais. Sob congestionamento o
+// controle de banda descarta camadas temporais inteiras em vez de borrar a
+// imagem, e o decodificador se recupera de perdas sem pedir keyframe.
+const SCREEN_SCALABILITY_MODE = 'L1T3';
+
+/**
+ * Reescreve o fmtp do Opus na SDP local.
+ * - usedtx=1: em silencio o Opus cai de ~50 pacotes/s para ~2,5/s. Numa
+ *   apresentacao tipica (a maior parte do tempo sem som) isso elimina quase
+ *   toda a banda de audio.
+ * - useinbandfec=1: recupera perdas dentro do proprio fluxo, sem retransmissao,
+ *   evitando o atraso de um NACK/round-trip.
+ * - minptime=10: permite pacotes de 10ms quando o encoder achar util.
+ */
+function tuneOpusSdp(sdp, { stereo = true, maxBitrate = AUDIO_MAX_BITRATE } = {}) {
+  if (typeof sdp !== 'string' || !sdp) return sdp;
+
+  const payloads = [...sdp.matchAll(/^a=rtpmap:(\d+)\s+opus\/\d+/gim)].map((m) => m[1]);
+  if (!payloads.length) return sdp;
+
+  const wanted = {
+    minptime: '10',
+    useinbandfec: '1',
+    usedtx: '1',
+    stereo: stereo ? '1' : '0',
+    'sprop-stereo': stereo ? '1' : '0',
+    maxaveragebitrate: String(maxBitrate)
+  };
+
+  const lines = sdp.split(/\r\n|\n/);
+  const out = [];
+  const seen = new Set();
+
+  for (const line of lines) {
+    const match = line.match(/^a=fmtp:(\d+)\s+(.*)$/i);
+    if (!match || !payloads.includes(match[1])) {
+      out.push(line);
+      continue;
+    }
+
+    const params = new Map();
+    for (const part of match[2].split(';')) {
+      const [key, ...rest] = part.split('=');
+      if (key && key.trim()) params.set(key.trim(), rest.join('='));
+    }
+    for (const [key, value] of Object.entries(wanted)) params.set(key, value);
+
+    seen.add(match[1]);
+    out.push(`a=fmtp:${match[1]} ${[...params].map(([k, v]) => `${k}=${v}`).join(';')}`);
+  }
+
+  // Payloads de Opus anunciados sem linha de fmtp: injeta uma logo apos o rtpmap.
+  const missing = payloads.filter((pt) => !seen.has(pt));
+  if (missing.length) {
+    const fmtp = Object.entries(wanted).map(([k, v]) => `${k}=${v}`).join(';');
+    for (let i = out.length - 1; i >= 0; i--) {
+      const match = out[i].match(/^a=rtpmap:(\d+)\s+opus\//i);
+      if (match && missing.includes(match[1])) {
+        out.splice(i + 1, 0, `a=fmtp:${match[1]} ${fmtp}`);
+      }
+    }
+  }
+
+  return out.join('\r\n');
+}
+
+/**
+ * DTX/FEC/maxaveragebitrate no Opus sao preferencias de RECEPTOR: o encoder do
+ * apresentador so os aplica se enxergar os parametros na SDP remota. Por isso
+ * ajustamos tambem a answer que chega do SFU (ou do espectador, em P2P) antes
+ * do setRemoteDescription — e o que de fato liga o DTX no lado que transmite.
+ */
+function tuneRemoteDescription(desc, audioOptions) {
+  if (!desc?.sdp) return desc;
+  try {
+    return new RTCSessionDescription({ type: desc.type, sdp: tuneOpusSdp(desc.sdp, audioOptions) });
+  } catch (err) {
+    console.warn('[WebRTC] Ajuste de SDP remota ignorado:', err.message);
+    return new RTCSessionDescription(desc);
+  }
+}
+
+function tuneLocalDescription(desc, audioOptions) {
+  if (!desc?.sdp) return desc;
+  try {
+    return { type: desc.type, sdp: tuneOpusSdp(desc.sdp, audioOptions) };
+  } catch (err) {
+    console.warn('[WebRTC] Ajuste de SDP do Opus ignorado:', err.message);
+    return desc;
+  }
+}
 
 function getEncodingProfile(quality) {
   return ENCODING_PROFILES[quality] || ENCODING_PROFILES['1080p60'];
@@ -122,7 +216,7 @@ function preferEfficientVideoCodecs(peer) {
   }
 }
 
-async function applySenderParams(sender, { maxBitrate, maxFramerate, degradationPreference } = {}) {
+async function applySenderParams(sender, { maxBitrate, maxFramerate, degradationPreference, networkPriority } = {}) {
   if (!sender) return;
 
   try {
@@ -134,6 +228,12 @@ async function applySenderParams(sender, { maxBitrate, maxFramerate, degradation
     params.encodings.forEach((enc) => {
       if (maxBitrate) enc.maxBitrate = maxBitrate;
       if (maxFramerate) enc.maxFramerate = maxFramerate;
+      // Prioridade define quem cede banda primeiro quando o link satura:
+      // a tela mantem qualidade, a webcam degrada antes.
+      if (networkPriority) {
+        enc.networkPriority = networkPriority;
+        enc.priority = networkPriority;
+      }
     });
 
     if (degradationPreference) {
@@ -144,6 +244,42 @@ async function applySenderParams(sender, { maxBitrate, maxFramerate, degradation
   } catch (err) {
     console.warn('[WebRTC] Encoding não aplicado:', err.message);
   }
+}
+
+/**
+ * Adiciona uma track de envio ja com os limites de encoding definidos.
+ *
+ * addTrack() so aceita limites depois via setParameters, e nesse intervalo o
+ * Chrome pode disparar uma rajada inicial no bitrate padrao (bem acima do teto
+ * desejado). Criando o transceiver com sendEncodings o teto vale desde o
+ * primeiro frame, e e a unica forma de pedir camadas temporais (scalabilityMode).
+ */
+function addSendTrack(peer, track, stream, encoding = {}) {
+  const sendEncoding = {};
+  if (encoding.maxBitrate) sendEncoding.maxBitrate = encoding.maxBitrate;
+  if (encoding.maxFramerate) sendEncoding.maxFramerate = encoding.maxFramerate;
+  if (encoding.networkPriority) {
+    sendEncoding.networkPriority = encoding.networkPriority;
+    sendEncoding.priority = encoding.networkPriority;
+  }
+  if (encoding.scalabilityMode && track.kind === 'video') {
+    sendEncoding.scalabilityMode = encoding.scalabilityMode;
+  }
+
+  if (typeof peer.addTransceiver === 'function') {
+    try {
+      const transceiver = peer.addTransceiver(track, {
+        direction: 'sendonly',
+        streams: stream ? [stream] : [],
+        sendEncodings: [sendEncoding]
+      });
+      if (transceiver?.sender) return transceiver.sender;
+    } catch (err) {
+      console.warn('[WebRTC] addTransceiver indisponível, usando addTrack:', err.message);
+    }
+  }
+
+  return stream ? peer.addTrack(track, stream) : peer.addTrack(track);
 }
 
 /**
@@ -160,6 +296,7 @@ class HostManager {
     this.micStream = null;
     this.audioContext = null;
     this.quality = '1080p60';
+    this.audioIsSpeechOnly = false;
     this.sfuPeer = null;
     this.sfuSenders = {};
     this.sfuReady = false;
@@ -167,30 +304,51 @@ class HostManager {
     this.peerSenders = new Map(); // viewerId -> { screenTrack, audioTrack, webcamTrack }
   }
 
+  screenEncoding() {
+    return {
+      ...getEncodingProfile(this.quality),
+      networkPriority: 'high',
+      scalabilityMode: SCREEN_SCALABILITY_MODE
+    };
+  }
+
+  audioEncoding() {
+    return { maxBitrate: this.audioMaxBitrate(), networkPriority: 'high' };
+  }
+
+  webcamEncoding() {
+    return {
+      maxBitrate: WEBCAM_MAX_BITRATE,
+      maxFramerate: WEBCAM_MAX_FRAMERATE,
+      degradationPreference: 'maintain-framerate',
+      networkPriority: 'low'
+    };
+  }
+
+  // Voz precisa de muito menos banda que audio de sistema: 48 kbps mono cobrem
+  // fala com folga, contra 128 kbps estereo necessarios para musica/jogo.
+  audioMaxBitrate() {
+    return this.audioIsSpeechOnly ? SPEECH_MAX_BITRATE : AUDIO_MAX_BITRATE;
+  }
+
+  audioSdpOptions() {
+    return { stereo: !this.audioIsSpeechOnly, maxBitrate: this.audioMaxBitrate() };
+  }
+
   async applyPeerEncoding(viewerId) {
     const senders = this.peerSenders.get(viewerId);
     if (!senders) return;
 
-    const encoding = getEncodingProfile(this.quality);
-    await applySenderParams(senders.screenSender, encoding);
-    await applySenderParams(senders.audioSender, { maxBitrate: AUDIO_MAX_BITRATE });
-    await applySenderParams(senders.webcamSender, {
-      maxBitrate: WEBCAM_MAX_BITRATE,
-      maxFramerate: WEBCAM_MAX_FRAMERATE,
-      degradationPreference: 'maintain-framerate'
-    });
+    await applySenderParams(senders.screenSender, this.screenEncoding());
+    await applySenderParams(senders.audioSender, this.audioEncoding());
+    await applySenderParams(senders.webcamSender, this.webcamEncoding());
   }
 
   async applySfuEncoding() {
     if (!this.sfuPeer) return;
-    const encoding = getEncodingProfile(this.quality);
-    await applySenderParams(this.sfuSenders.screenSender, encoding);
-    await applySenderParams(this.sfuSenders.audioSender, { maxBitrate: AUDIO_MAX_BITRATE });
-    await applySenderParams(this.sfuSenders.webcamSender, {
-      maxBitrate: WEBCAM_MAX_BITRATE,
-      maxFramerate: WEBCAM_MAX_FRAMERATE,
-      degradationPreference: 'maintain-framerate'
-    });
+    await applySenderParams(this.sfuSenders.screenSender, this.screenEncoding());
+    await applySenderParams(this.sfuSenders.audioSender, this.audioEncoding());
+    await applySenderParams(this.sfuSenders.webcamSender, this.webcamEncoding());
   }
 
   async publishToSfu() {
@@ -207,15 +365,17 @@ class HostManager {
     this.sfuPeer = new RTCPeerConnection(rtcConfig);
 
     this.screenStream.getTracks().forEach((track) => {
-      const sender = this.sfuPeer.addTrack(track, this.screenStream);
-      if (track.kind === 'video') this.sfuSenders.screenSender = sender;
-      if (track.kind === 'audio') this.sfuSenders.audioSender = sender;
+      if (track.kind === 'video') {
+        this.sfuSenders.screenSender = addSendTrack(this.sfuPeer, track, this.screenStream, this.screenEncoding());
+      } else if (track.kind === 'audio') {
+        this.sfuSenders.audioSender = addSendTrack(this.sfuPeer, track, this.screenStream, this.audioEncoding());
+      }
     });
 
     if (this.webcamStream) {
       const webcamTrack = this.webcamStream.getVideoTracks()[0];
       if (webcamTrack) {
-        this.sfuSenders.webcamSender = this.sfuPeer.addTrack(webcamTrack, this.webcamStream);
+        this.sfuSenders.webcamSender = addSendTrack(this.sfuPeer, webcamTrack, this.webcamStream, this.webcamEncoding());
       }
     }
 
@@ -238,10 +398,10 @@ class HostManager {
       }
     };
 
-    const offer = await this.sfuPeer.createOffer({
-      offerToReceiveAudio: false,
-      offerToReceiveVideo: false
-    });
+    const offer = tuneLocalDescription(
+      await this.sfuPeer.createOffer({ offerToReceiveAudio: false, offerToReceiveVideo: false }),
+      this.audioSdpOptions()
+    );
     await this.sfuPeer.setLocalDescription(offer);
     await this.applySfuEncoding();
 
@@ -254,7 +414,7 @@ class HostManager {
 
   async handleSfuAnswer(answer) {
     if (!this.sfuPeer || !answer) return;
-    await this.sfuPeer.setRemoteDescription(new RTCSessionDescription(answer));
+    await this.sfuPeer.setRemoteDescription(tuneRemoteDescription(answer, this.audioSdpOptions()));
     this.sfuReady = true;
   }
 
@@ -270,7 +430,7 @@ class HostManager {
   async renegotiateSfu() {
     if (!this.sfuPeer || this.sfuPeer.signalingState === 'closed') return;
     preferEfficientVideoCodecs(this.sfuPeer);
-    const offer = await this.sfuPeer.createOffer();
+    const offer = tuneLocalDescription(await this.sfuPeer.createOffer(), this.audioSdpOptions());
     await this.sfuPeer.setLocalDescription(offer);
     await this.applySfuEncoding();
     this.socket.emit('sfu:publish-offer', {
@@ -395,6 +555,10 @@ class HostManager {
         setTrackContentHint(track, includeAudio ? 'music' : 'speech');
       });
 
+      // Sem audio de sistema, o que sobra e no maximo o microfone: voz mono
+      // cabe em uma fracao do bitrate reservado para musica/jogo.
+      this.audioIsSpeechOnly = displayStream.getAudioTracks().length === 0;
+
       if (this.onStreamReady) {
         this.onStreamReady(this.screenStream);
       }
@@ -427,21 +591,17 @@ class HostManager {
       this.peers.forEach((peer, viewerId) => {
         const webcamTrack = this.webcamStream.getVideoTracks()[0];
         if (webcamTrack) {
-          const sender = peer.addTrack(webcamTrack, this.webcamStream);
           if (!this.peerSenders.has(viewerId)) this.peerSenders.set(viewerId, {});
-          this.peerSenders.get(viewerId).webcamSender = sender;
-          applySenderParams(sender, {
-            maxBitrate: WEBCAM_MAX_BITRATE,
-            maxFramerate: WEBCAM_MAX_FRAMERATE,
-            degradationPreference: 'maintain-framerate'
-          });
+          this.peerSenders.get(viewerId).webcamSender =
+            addSendTrack(peer, webcamTrack, this.webcamStream, this.webcamEncoding());
         }
       });
 
       if (this.sfuPeer && this.webcamStream) {
         const webcamTrack = this.webcamStream.getVideoTracks()[0];
         if (webcamTrack && !this.sfuSenders.webcamSender) {
-          this.sfuSenders.webcamSender = this.sfuPeer.addTrack(webcamTrack, this.webcamStream);
+          this.sfuSenders.webcamSender =
+            addSendTrack(this.sfuPeer, webcamTrack, this.webcamStream, this.webcamEncoding());
           await this.renegotiateSfu();
         }
       }
@@ -485,18 +645,20 @@ class HostManager {
     this.peerSenders.set(viewerId, {});
 
     // 1. Adiciona faixas de tela e áudio
+    const senders = this.peerSenders.get(viewerId);
     this.screenStream.getTracks().forEach((track) => {
-      const sender = peer.addTrack(track, this.screenStream);
-      if (track.kind === 'video') this.peerSenders.get(viewerId).screenSender = sender;
-      if (track.kind === 'audio') this.peerSenders.get(viewerId).audioSender = sender;
+      if (track.kind === 'video') {
+        senders.screenSender = addSendTrack(peer, track, this.screenStream, this.screenEncoding());
+      } else if (track.kind === 'audio') {
+        senders.audioSender = addSendTrack(peer, track, this.screenStream, this.audioEncoding());
+      }
     });
 
     // 2. Adiciona faixa da webcam se ativa
     if (this.webcamStream) {
       const webcamTrack = this.webcamStream.getVideoTracks()[0];
       if (webcamTrack) {
-        const sender = peer.addTrack(webcamTrack, this.webcamStream);
-        this.peerSenders.get(viewerId).webcamSender = sender;
+        senders.webcamSender = addSendTrack(peer, webcamTrack, this.webcamStream, this.webcamEncoding());
       }
     }
 
@@ -515,10 +677,10 @@ class HostManager {
 
     // Cria Oferta
     try {
-      const offer = await peer.createOffer({
-        offerToReceiveAudio: false,
-        offerToReceiveVideo: false
-      });
+      const offer = tuneLocalDescription(
+        await peer.createOffer({ offerToReceiveAudio: false, offerToReceiveVideo: false }),
+        this.audioSdpOptions()
+      );
       await peer.setLocalDescription(offer);
       await this.applyPeerEncoding(viewerId);
 
@@ -535,7 +697,7 @@ class HostManager {
   async handleAnswer(viewerId, answer) {
     const peer = this.peers.get(viewerId);
     if (peer) {
-      await peer.setRemoteDescription(new RTCSessionDescription(answer));
+      await peer.setRemoteDescription(tuneRemoteDescription(answer, this.audioSdpOptions()));
     }
   }
 
@@ -752,7 +914,7 @@ class ViewerManager {
       });
     }
 
-    const answer = await this.peer.createAnswer();
+    const answer = tuneLocalDescription(await this.peer.createAnswer());
     await this.peer.setLocalDescription(answer);
     this.emitAnswer(answer);
 
