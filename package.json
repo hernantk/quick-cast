@@ -15,8 +15,8 @@
     "webrtc",
     "p2p"
   ],
-  "author": "",
-  "license": "ISC",
+  "author": "HernanTk",
+  "license": "Apache-2.0",
   "dependencies": {
     "express": "^5.2.1",
     "qrcode": "^1.5.4",

@@ -68,4 +68,8 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
+---
 
+## 📄 Licença
+
+Este projeto está licenciado sob a Licença Apache 2.0 - consulte o arquivo [LICENSE](LICENSE) para obter mais detalhes.
