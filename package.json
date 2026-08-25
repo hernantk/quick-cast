@@ -8,7 +8,8 @@
     "start": "bun server.js",
     "dev": "bun --watch server.js",
     "build:exe": "bun scripts/prepare-vendor.js && bun build --compile --minify --outfile dist/quickcast server.js",
-    "test:exe": "bun scripts/test-exe.js"
+    "test:exe": "bun scripts/test-exe.js",
+    "test": "bun test/run.js"
   },
   "keywords": [
     "screen-sharing",

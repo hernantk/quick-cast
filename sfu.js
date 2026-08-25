@@ -35,9 +35,12 @@ try {
   return;
 }
 
+const { TemporalClassifier } = require('./temporal');
+
 const {
   RTCPeerConnection,
   RTCRtpCodecParameters,
+  MediaStreamTrack,
   useVP8,
   useVP9,
   useH264,
@@ -56,6 +59,10 @@ const {
 
 // NACK+PLI para recuperacao, REMB+TWCC para estimativa de banda.
 const RTCP_VIDEO = [useNACK(), usePLI(), useREMB(), useTWCC()];
+
+// useOPUS() vem com rtcpFeedback vazio, o que deixa o audio invisivel para o
+// controle de congestionamento: ele consome banda sem aparecer na conta.
+const RTCP_AUDIO = [useTWCC()];
 
 // O werift nao negocia nenhuma extensao de cabecalho por padrao. Sem
 // transport-cc/abs-send-time o navegador transmite "as cegas": nao recebe
@@ -83,6 +90,20 @@ function withFeedback(codec) {
   });
 }
 
+function audioCodecs() {
+  return [useOPUS()].flat().map(
+    (codec) =>
+      new RTCRtpCodecParameters({
+        mimeType: codec.mimeType,
+        clockRate: codec.clockRate,
+        channels: codec.channels,
+        payloadType: codec.payloadType,
+        parameters: codec.parameters,
+        rtcpFeedback: RTCP_AUDIO
+      })
+  );
+}
+
 function videoCodecs() {
   return [useVP9(), useVP8(), useH264(), useAV1X()]
     .flat()
@@ -98,6 +119,143 @@ function videoCodecs() {
 
 // Intervalo minimo entre pedidos de keyframe para a mesma track.
 const KEYFRAME_MIN_INTERVAL_MS = 1000;
+
+// O apresentador publica L1T3: uma camada espacial, tres temporais (0,1,2).
+const MAX_TEMPORAL_LAYER = 2;
+
+// Politica de adaptacao por espectador, guiada pela perda relatada nos
+// Receiver Reports RTCP. Nao usamos o estimador de banda do werift porque ele
+// nao produz leitura confiavel (availableBitrate fica em zero e o score de
+// congestionamento satura mesmo em loopback sem perda nenhuma).
+const LOSS_DOWNGRADE = 0.06; // ~6% de perda: derruba uma camada
+const LOSS_UPGRADE = 0.01; // abaixo de 1% de forma sustentada: sobe de volta
+const UPGRADE_STABLE_REPORTS = 5; // relatorios limpos exigidos antes de subir
+const TEMPORAL_ENABLED = process.env.SFU_TEMPORAL !== '0';
+
+function uint16(value) {
+  return value & 0xffff;
+}
+
+/**
+ * Replica uma track de video publicada para os espectadores, podendo descartar
+ * camadas temporais individualmente para cada um.
+ *
+ * O parsing da camada acontece UMA vez por pacote (o estado de templates do
+ * dependency descriptor pertence ao fluxo, nao ao espectador); o resultado e
+ * reaproveitado por todos os inscritos.
+ *
+ * Ao descartar pacotes precisamos renumerar os que seguem: se deixassemos os
+ * buracos na sequencia RTP, o navegador do espectador leria como perda e
+ * dispararia NACKs pedindo pacotes que nunca foram enviados.
+ */
+class VideoFanout {
+  constructor(published) {
+    this.published = published;
+    this.classifier = new TemporalClassifier(published.track?.codec?.mimeType);
+    this.subscribers = new Map(); // viewerId -> estado de encaminhamento
+    this.unsubscribe = null;
+  }
+
+  start() {
+    if (this.unsubscribe) return;
+    const sub = this.published.track.onReceiveRtp.subscribe((rtp, extensions) => {
+      this.onRtp(rtp, extensions);
+    });
+    this.unsubscribe = sub?.unSubscribe || null;
+  }
+
+  onRtp(rtp, extensions) {
+    // O codec so fica conhecido depois da negociacao; atualiza na primeira vez.
+    if (!this.classifier.mime && this.published.track?.codec?.mimeType) {
+      this.classifier.mime = this.published.track.codec.mimeType.toLowerCase();
+    }
+
+    let layer = null;
+    try {
+      layer = this.classifier.classify(rtp, extensions);
+    } catch (err) {
+      layer = null;
+    }
+
+    for (const state of this.subscribers.values()) {
+      // layer null = camada indeterminada: encaminha, nunca arrisca cortar.
+      if (layer !== null && layer > state.targetLayer) {
+        state.dropped = uint16(state.dropped + 1);
+        state.droppedTotal++;
+        continue;
+      }
+
+      const clone = rtp.clone();
+      clone.header.sequenceNumber = uint16(rtp.header.sequenceNumber - state.dropped);
+      try {
+        state.track.writeRtp(clone);
+      } catch (err) {
+        // espectador saindo no meio do envio
+      }
+    }
+  }
+
+  createTrack(viewerId) {
+    const track = new MediaStreamTrack({ kind: 'video' });
+    this.subscribers.set(viewerId, {
+      track,
+      targetLayer: MAX_TEMPORAL_LAYER,
+      dropped: 0,
+      droppedTotal: 0,
+      cleanReports: 0
+    });
+    this.start();
+    return track;
+  }
+
+  removeTrack(viewerId) {
+    const state = this.subscribers.get(viewerId);
+    if (!state) return;
+    this.subscribers.delete(viewerId);
+    try {
+      state.track.stop?.();
+    } catch (err) {}
+  }
+
+  /** Aplica a perda relatada por um espectador e ajusta a camada alvo dele. */
+  applyLoss(viewerId, lossRatio) {
+    const state = this.subscribers.get(viewerId);
+    if (!state || !this.classifier.sawTemporalLayers) return null;
+
+    const before = state.targetLayer;
+
+    if (lossRatio >= LOSS_DOWNGRADE) {
+      state.cleanReports = 0;
+      if (state.targetLayer > 0) state.targetLayer--;
+    } else if (lossRatio <= LOSS_UPGRADE) {
+      state.cleanReports++;
+      if (state.cleanReports >= UPGRADE_STABLE_REPORTS && state.targetLayer < MAX_TEMPORAL_LAYER) {
+        state.targetLayer++;
+        state.cleanReports = 0;
+      }
+    } else {
+      state.cleanReports = 0;
+    }
+
+    return state.targetLayer === before ? null : { from: before, to: state.targetLayer };
+  }
+
+  stats(viewerId) {
+    const state = this.subscribers.get(viewerId);
+    if (!state) return null;
+    return { targetLayer: state.targetLayer, droppedTotal: state.droppedTotal };
+  }
+
+  close() {
+    if (this.unsubscribe) {
+      try {
+        this.unsubscribe();
+      } catch (err) {}
+      this.unsubscribe = null;
+    }
+    for (const viewerId of [...this.subscribers.keys()]) this.removeTrack(viewerId);
+  }
+}
 
 function localHostAddresses() {
   const addresses = ['127.0.0.1'];
@@ -132,7 +290,7 @@ function peerConfig() {
     iceUseTcp: true,
     headerExtensions: headerExtensions(),
     codecs: {
-      audio: [useOPUS()],
+      audio: audioCodecs(),
       video: videoCodecs()
     }
   };
@@ -210,7 +368,11 @@ class SfuRoom {
     if (this.tracks.some((item) => item.track.uuid === track.uuid)) return;
     const videos = this.tracks.filter((t) => t.kind === 'video').length;
     const label = track.kind === 'audio' ? 'audio' : (videos === 0 ? 'screen' : 'webcam');
-    this.tracks.push({ track, kind: track.kind, label, transceiver });
+    const published = { track, kind: track.kind, label, transceiver };
+    if (track.kind === 'video' && TEMPORAL_ENABLED) {
+      published.fanout = new VideoFanout(published);
+    }
+    this.tracks.push(published);
     console.log(`[SFU] Track recebida na sala ${this.roomId}: ${label} (${track.kind})`);
   }
 
@@ -280,13 +442,48 @@ class SfuRoom {
     }
   }
 
-  addPublishedTrackToPeer(pc, published) {
-    const sender = pc.addTrack(published.track);
+  addPublishedTrackToPeer(pc, published, viewerId) {
+    // Video com camadas temporais recebe uma track propria por espectador, o
+    // que permite descartar camadas so para quem esta com perda. Audio (e o
+    // caso sem fanout) segue no caminho compartilhado.
+    const outbound = published.fanout && viewerId
+      ? published.fanout.createTrack(viewerId)
+      : published.track;
+
+    const sender = pc.addTrack(outbound);
+
     if (published.kind === 'video' && sender?.onPictureLossIndication) {
       // Repassa o PLI do espectador ao publisher (throttled).
       sender.onPictureLossIndication.subscribe(() => this.requestKeyframe(published));
     }
+
+    if (published.fanout && viewerId && sender?.onRtcp) {
+      sender.onRtcp.subscribe((rtcp) => this.handleSubscriberRtcp(published, viewerId, rtcp));
+    }
+
     return sender;
+  }
+
+  /**
+   * Receiver Reports trazem `fractionLost` em 1/256. E o unico sinal de
+   * congestionamento confiavel disponivel aqui, e chega ~1x por segundo.
+   */
+  handleSubscriberRtcp(published, viewerId, rtcp) {
+    if (!rtcp || !Array.isArray(rtcp.reports) || !rtcp.reports.length) return;
+
+    let worst = 0;
+    for (const report of rtcp.reports) {
+      const lost = (report?.fractionLost || 0) / 256;
+      if (lost > worst) worst = lost;
+    }
+
+    const change = published.fanout.applyLoss(viewerId, worst);
+    if (change) {
+      console.log(
+        `[SFU] Espectador ${viewerId}: camada temporal ${change.from} -> ${change.to} ` +
+        `(perda ${(worst * 100).toFixed(1)}%)`
+      );
+    }
   }
 
   async forwardNewTrack(track) {
@@ -294,10 +491,12 @@ class SfuRoom {
     if (!published) return;
 
     for (const [viewerId, sub] of this.subscribers) {
-      const already = sub.pc.getSenders().some((sender) => sender.track?.uuid === published.track.uuid);
+      const already = published.fanout
+        ? published.fanout.subscribers.has(viewerId)
+        : sub.pc.getSenders().some((sender) => sender.track?.uuid === published.track.uuid);
       if (already) continue;
       try {
-        this.addPublishedTrackToPeer(sub.pc, published);
+        this.addPublishedTrackToPeer(sub.pc, published, viewerId);
         await this.renegotiateSubscriber(viewerId);
       } catch (err) {
         console.warn(`[SFU] Não foi possível adicionar track ao espectador ${viewerId}:`, err.message);
@@ -328,7 +527,7 @@ class SfuRoom {
     this.subscribers.set(socket.id, { pc, socket });
 
     for (const published of this.tracks) {
-      this.addPublishedTrackToPeer(pc, published);
+      this.addPublishedTrackToPeer(pc, published, socket.id);
     }
 
     const emitSubscriberIce = (candidate) => {
@@ -391,6 +590,9 @@ class SfuRoom {
     if (!sub) return;
     this.subscribers.delete(viewerId);
     if (sub.bootstrapTimer) clearTimeout(sub.bootstrapTimer);
+    for (const published of this.tracks) {
+      if (published.fanout) published.fanout.removeTrack(viewerId);
+    }
     try {
       await sub.pc.close();
     } catch (e) {}
@@ -406,6 +608,10 @@ class SfuRoom {
         await this.publisherPc.close();
       } catch (e) {}
       this.publisherPc = null;
+    }
+
+    for (const published of this.tracks) {
+      if (published.fanout) published.fanout.close();
     }
 
     this.tracks = [];
@@ -437,4 +643,4 @@ class SfuManager {
   }
 }
 
-module.exports = { SfuManager, serializeCandidate };
+module.exports = { SfuManager, serializeCandidate, VideoFanout, MAX_TEMPORAL_LAYER };

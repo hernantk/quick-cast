@@ -77,6 +77,11 @@ const VIDEO_CODEC_PREFERENCE = ['video/AV1', 'video/VP9', 'video/H264', 'video/V
 // imagem, e o decodificador se recupera de perdas sem pedir keyframe.
 const SCREEN_SCALABILITY_MODE = 'L1T3';
 
+// No fallback P2P cada espectador recebe um encode e um upload proprios: tres
+// espectadores triplicam a banda de subida do apresentador. Dividimos o teto
+// entre eles para o total ficar limitado, com um piso para nao virar borrao.
+const P2P_MIN_SCREEN_BITRATE = 700_000;
+
 /**
  * Reescreve o fmtp do Opus na SDP local.
  * - usedtx=1: em silencio o Opus cai de ~50 pacotes/s para ~2,5/s. Numa
@@ -312,6 +317,24 @@ class HostManager {
     };
   }
 
+  /** Teto de tela para UM espectador P2P, ja dividido pelo total de peers. */
+  p2pScreenEncoding() {
+    const base = this.screenEncoding();
+    const peers = Math.max(1, this.peers.size);
+    if (peers === 1) return base;
+    return {
+      ...base,
+      maxBitrate: Math.max(Math.round(base.maxBitrate / peers), P2P_MIN_SCREEN_BITRATE)
+    };
+  }
+
+  /** Redistribui o orcamento quando entra ou sai um espectador P2P. */
+  async reapplyPeerEncodings() {
+    for (const viewerId of this.peers.keys()) {
+      await this.applyPeerEncoding(viewerId);
+    }
+  }
+
   audioEncoding() {
     return { maxBitrate: this.audioMaxBitrate(), networkPriority: 'high' };
   }
@@ -339,7 +362,7 @@ class HostManager {
     const senders = this.peerSenders.get(viewerId);
     if (!senders) return;
 
-    await applySenderParams(senders.screenSender, this.screenEncoding());
+    await applySenderParams(senders.screenSender, this.p2pScreenEncoding());
     await applySenderParams(senders.audioSender, this.audioEncoding());
     await applySenderParams(senders.webcamSender, this.webcamEncoding());
   }
@@ -630,6 +653,19 @@ class HostManager {
       }
     });
 
+    // O caminho SFU tambem precisa soltar o sender. Sem isso a track fica
+    // pendurada na conexao e, pior, `sfuSenders.webcamSender` continua
+    // preenchido — o que faz o religar da webcam ser silenciosamente ignorado.
+    if (this.sfuPeer && this.sfuSenders.webcamSender) {
+      try {
+        this.sfuPeer.removeTrack(this.sfuSenders.webcamSender);
+      } catch (e) {}
+      this.sfuSenders.webcamSender = null;
+      this.renegotiateSfu().catch((err) => {
+        console.warn('[SFU] Renegociação ao desligar a webcam falhou:', err.message);
+      });
+    }
+
     if (this.onWebcamReady) {
       this.onWebcamReady(null);
     }
@@ -648,7 +684,7 @@ class HostManager {
     const senders = this.peerSenders.get(viewerId);
     this.screenStream.getTracks().forEach((track) => {
       if (track.kind === 'video') {
-        senders.screenSender = addSendTrack(peer, track, this.screenStream, this.screenEncoding());
+        senders.screenSender = addSendTrack(peer, track, this.screenStream, this.p2pScreenEncoding());
       } else if (track.kind === 'audio') {
         senders.audioSender = addSendTrack(peer, track, this.screenStream, this.audioEncoding());
       }
@@ -689,6 +725,9 @@ class HostManager {
         offer,
         hasWebcam: !!this.webcamStream
       });
+
+      // O novo peer muda a divisao do orcamento para todos os outros.
+      await this.reapplyPeerEncodings();
     } catch (err) {
       console.error(`Erro ao criar oferta para ${viewerId}:`, err);
     }
@@ -718,6 +757,8 @@ class HostManager {
       peer.close();
       this.peers.delete(viewerId);
       this.peerSenders.delete(viewerId);
+      // Sobrou banda para quem ficou.
+      this.reapplyPeerEncodings().catch(() => {});
     }
   }
 
