@@ -41,6 +41,8 @@ const overlayDesc = document.getElementById('overlayDesc');
 const unmuteBtn = document.getElementById('unmuteBtn');
 const networkIpText = document.getElementById('networkIpText');
 const exitBtnText = document.getElementById('exitBtnText');
+const liveQualityContainer = document.getElementById('liveQualityContainer');
+const liveQualitySelect = document.getElementById('liveQualitySelect');
 const statsResolution = document.getElementById('statsResolution');
 const qrModal = document.getElementById('qrModal');
 const qrImage = document.getElementById('qrImage');
@@ -85,14 +87,16 @@ async function fetchNetworkInfo() {
     const res = await fetch('/api/network-info');
     const data = await res.json();
 
-    if (data.networkUrls && data.networkUrls.length > 0) {
-      const net = data.networkUrls[0];
-      networkIpText.innerHTML = `Rede Wi-Fi: <b>${net.ip}:${data.port}</b>`;
-    } else {
-      networkIpText.innerText = `Porta: ${data.port}`;
+    if (networkIpText) {
+      if (data.networkUrls && data.networkUrls.length > 0) {
+        const net = data.networkUrls[0];
+        networkIpText.innerHTML = `Rede Wi-Fi: <b>${net.ip}:${data.port}</b>`;
+      } else {
+        networkIpText.innerText = `Porta: ${data.port}`;
+      }
     }
   } catch (err) {
-    networkIpText.innerText = 'Online';
+    if (networkIpText) networkIpText.innerText = 'Online';
   }
 }
 
@@ -179,6 +183,12 @@ async function startHostStream() {
         streamStatusText.innerText = 'TRANSMITINDO AO VIVO';
         videoOverlay.classList.add('hidden');
         toggleWebcamBtn.style.display = 'inline-flex';
+        if (liveQualityContainer) {
+          liveQualityContainer.style.display = 'inline-flex';
+        }
+        if (liveQualitySelect) {
+          liveQualitySelect.value = quality;
+        }
 
         updateVideoStats();
 
@@ -239,6 +249,20 @@ async function toggleLiveWebcam() {
   }
 }
 
+// Alternar qualidade ao vivo durante a transmissão (Host)
+async function changeLiveQuality(quality) {
+  if (!hostManager) return;
+  try {
+    await hostManager.setQuality(quality);
+    const selectedOption = liveQualitySelect?.options[liveQualitySelect.selectedIndex]?.text || quality;
+    const cleanName = selectedOption.replace(/^[^\w\d]+/, '').split('(')[0].trim();
+    showToast(`Qualidade alterada: ${cleanName}`, 'success');
+  } catch (err) {
+    console.error('Erro ao alterar qualidade:', err);
+    showToast('Falha ao alterar qualidade da transmissão.', 'error');
+  }
+}
+
 // -------------------------------------------------------------
 // FLUXO DO ESPECTADOR (VIEWER)
 // -------------------------------------------------------------
@@ -268,6 +292,9 @@ function joinViewerStream(overridePin = null) {
   exitBtnText.innerText = 'Sair da Sala';
   streamStatusText.innerText = 'CONECTANDO...';
   toggleWebcamBtn.style.display = 'none';
+  if (liveQualityContainer) {
+    liveQualityContainer.style.display = 'none';
+  }
 
   videoOverlay.classList.remove('hidden');
   overlayTitle.innerText = 'Conectando à transmissão...';
@@ -473,20 +500,26 @@ function handleExitStream() {
   mainVideo.srcObject = null;
   webcamVideo.srcObject = null;
   webcamPip.classList.remove('active');
+  if (liveQualityContainer) {
+    liveQualityContainer.style.display = 'none';
+  }
   streamSection.classList.remove('active');
   setupSection.style.display = 'block';
   videoOverlay.classList.add('hidden');
 }
 
 function updateVideoStats() {
-  if (!mainVideo) return;
-  mainVideo.onloadedmetadata = () => {
+  if (!mainVideo || !statsResolution) return;
+  const updateSize = () => {
     const w = mainVideo.videoWidth;
     const h = mainVideo.videoHeight;
     if (w && h) {
       statsResolution.innerText = `${w}x${h}`;
     }
   };
+  mainVideo.onloadedmetadata = updateSize;
+  mainVideo.onresize = updateSize;
+  updateSize();
 }
 
 // Link de compartilhamento

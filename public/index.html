@@ -22,12 +22,6 @@
       <span class="badge-tag">P2P HD</span>
     </a>
 
-    <div class="nav-right">
-      <div class="network-status" id="networkStatusBadge">
-        <div class="status-dot"></div>
-        <span id="networkIpText">Pronto para conectar</span>
-      </div>
-    </div>
   </header>
 
   <!-- Main Container -->
@@ -84,12 +78,15 @@
         </div>
 
         <div class="form-group">
-          <label class="form-label">Qualidade / Fluidez</label>
+          <label class="form-label">Qualidade / Fluidez da Transmissão</label>
           <select id="qualitySelect" class="select-field">
-            <option value="1080p60" selected>⚡ 1080p 60 FPS (Ultra Fluidez / Games / Vídeos)</option>
-            <option value="1080p30">📄 1080p 30 FPS (Equilibrado / Apresentações)</option>
-            <option value="720p30">🚀 720p 30 FPS (Modo Econômico / Conexão Lenta)</option>
-            <option value="4k30">💎 4K 30 FPS (Máxima Resolução)</option>
+            <option value="1080p60_ultra" selected>⚡ 1080p 60 FPS — Ultra (Máxima Nitidez / Games / 14 Mbps)</option>
+            <option value="1080p60">🎮 1080p 60 FPS — Alto Desempenho (8.5 Mbps)</option>
+            <option value="1080p30">📄 1080p 30 FPS — Equilibrado / Texto (4.5 Mbps)</option>
+            <option value="2k60">🌟 1440p 2K 60 FPS — Alta Resolução (18 Mbps)</option>
+            <option value="4k30">💎 4K 30 FPS — Máxima Resolução (25 Mbps)</option>
+            <option value="720p60">🚀 720p 60 FPS — Conexão Média (3.5 Mbps)</option>
+            <option value="720p30">📉 720p 30 FPS — Modo Econômico (1.8 Mbps)</option>
           </select>
         </div>
 
@@ -187,6 +184,25 @@
         </div>
 
         <div class="stream-actions">
+          <!-- Seletor de Qualidade ao Vivo (Host) -->
+          <div class="live-quality-container" id="liveQualityContainer" style="display: none;">
+            <div class="select-wrapper">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="select-icon">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+              </svg>
+              <select id="liveQualitySelect" class="live-quality-select" onchange="changeLiveQuality(this.value)" title="Qualidade da Transmissão">
+                <option value="1080p60_ultra">⚡ 1080p 60 FPS (Ultra / Nitidez Máxima)</option>
+                <option value="1080p60">🎮 1080p 60 FPS (Alto Desempenho)</option>
+                <option value="1080p30">📄 1080p 30 FPS (Equilibrado)</option>
+                <option value="2k60">🌟 1440p 2K 60 FPS (Alta Resolução)</option>
+                <option value="4k30">💎 4K 30 FPS (Máxima Resolução)</option>
+                <option value="720p60">🚀 720p 60 FPS (Conexão Média)</option>
+                <option value="720p30">📉 720p 30 FPS (Modo Econômico)</option>
+              </select>
+            </div>
+          </div>
+
           <!-- Toggle Webcam ao Vivo (Host) -->
           <button class="btn btn-secondary" id="toggleWebcamBtn" onclick="toggleLiveWebcam()" style="display: none;" title="Ligar/Desligar Webcam">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

@@ -16,50 +16,83 @@ const rtcConfig = {
 
 // Perfis de qualidade de vídeo da tela (captura)
 const QUALITY_PROFILES = {
+  '1080p60_ultra': {
+    width: { ideal: 1920 },
+    height: { ideal: 1080 },
+    frameRate: { ideal: 60, max: 60 }
+  },
   '1080p60': {
-    width: { ideal: 1920, max: 1920 },
-    height: { ideal: 1080, max: 1080 },
+    width: { ideal: 1920 },
+    height: { ideal: 1080 },
     frameRate: { ideal: 60, max: 60 }
   },
   '1080p30': {
-    width: { ideal: 1920, max: 1920 },
-    height: { ideal: 1080, max: 1080 },
+    width: { ideal: 1920 },
+    height: { ideal: 1080 },
     frameRate: { ideal: 30, max: 30 }
+  },
+  '2k60': {
+    width: { ideal: 2560 },
+    height: { ideal: 1440 },
+    frameRate: { ideal: 60, max: 60 }
+  },
+  '4k30': {
+    width: { ideal: 3840 },
+    height: { ideal: 2160 },
+    frameRate: { ideal: 30, max: 30 }
+  },
+  '720p60': {
+    width: { ideal: 1280, max: 1280 },
+    height: { ideal: 720, max: 720 },
+    frameRate: { ideal: 60, max: 60 }
   },
   '720p30': {
     width: { ideal: 1280, max: 1280 },
     height: { ideal: 720, max: 720 },
     frameRate: { ideal: 30, max: 30 }
-  },
-  '4k30': {
-    width: { ideal: 3840, max: 3840 },
-    height: { ideal: 2160, max: 2160 },
-    frameRate: { ideal: 30, max: 30 }
   }
 };
 
-// Limites de encoding: mesma resolução/FPS, bem menos banda que o default do Chrome (10–25 Mbps)
+// Limites de encoding: resolução, FPS, bitrate e preferências de degradação
 const ENCODING_PROFILES = {
-  '1080p60': {
-    maxBitrate: 6_500_000,
+  '1080p60_ultra': {
+    maxBitrate: 14_000_000,
     maxFramerate: 60,
-    contentHint: 'motion',
-    degradationPreference: 'maintain-framerate'
-  },
-  '1080p30': {
-    maxBitrate: 3_500_000,
-    maxFramerate: 30,
-    contentHint: 'text',
+    contentHint: 'detail',
     degradationPreference: 'maintain-resolution'
   },
-  '720p30': {
-    maxBitrate: 1_800_000,
+  '1080p60': {
+    maxBitrate: 8_500_000,
+    maxFramerate: 60,
+    contentHint: 'detail',
+    degradationPreference: 'maintain-resolution'
+  },
+  '1080p30': {
+    maxBitrate: 4_500_000,
     maxFramerate: 30,
-    contentHint: 'text',
+    contentHint: 'detail',
+    degradationPreference: 'maintain-resolution'
+  },
+  '2k60': {
+    maxBitrate: 18_000_000,
+    maxFramerate: 60,
+    contentHint: 'detail',
     degradationPreference: 'maintain-resolution'
   },
   '4k30': {
-    maxBitrate: 10_000_000,
+    maxBitrate: 25_000_000,
+    maxFramerate: 30,
+    contentHint: 'detail',
+    degradationPreference: 'maintain-resolution'
+  },
+  '720p60': {
+    maxBitrate: 3_500_000,
+    maxFramerate: 60,
+    contentHint: 'motion',
+    degradationPreference: 'balanced'
+  },
+  '720p30': {
+    maxBitrate: 1_800_000,
     maxFramerate: 30,
     contentHint: 'text',
     degradationPreference: 'maintain-resolution'
@@ -80,7 +113,7 @@ const SCREEN_SCALABILITY_MODE = 'L1T3';
 // No fallback P2P cada espectador recebe um encode e um upload proprios: tres
 // espectadores triplicam a banda de subida do apresentador. Dividimos o teto
 // entre eles para o total ficar limitado, com um piso para nao virar borrao.
-const P2P_MIN_SCREEN_BITRATE = 700_000;
+const P2P_MIN_SCREEN_BITRATE = 1_500_000;
 
 /**
  * Reescreve o fmtp do Opus na SDP local.
@@ -372,6 +405,42 @@ class HostManager {
     await applySenderParams(this.sfuSenders.screenSender, this.screenEncoding());
     await applySenderParams(this.sfuSenders.audioSender, this.audioEncoding());
     await applySenderParams(this.sfuSenders.webcamSender, this.webcamEncoding());
+  }
+
+  async setQuality(quality) {
+    if (!QUALITY_PROFILES[quality]) return;
+    this.quality = quality;
+    const videoConstraints = QUALITY_PROFILES[quality];
+    const encoding = getEncodingProfile(quality);
+
+    console.log(`[Host] Mudando qualidade em tempo real para: ${quality}`, encoding);
+
+    // 1. Atualizar constraints da faixa de vídeo local se disponível
+    if (this.screenStream) {
+      const videoTrack = this.screenStream.getVideoTracks()[0];
+      if (videoTrack) {
+        try {
+          await videoTrack.applyConstraints({
+            width: videoConstraints.width,
+            height: videoConstraints.height,
+            frameRate: videoConstraints.frameRate
+          });
+        } catch (err) {
+          console.warn('[WebRTC] applyConstraints falhou:', err.message);
+        }
+        setTrackContentHint(videoTrack, encoding.contentHint);
+      }
+    }
+
+    // 2. Atualizar parâmetros do sender SFU
+    if (this.sfuPeer) {
+      await this.applySfuEncoding();
+    }
+
+    // 3. Atualizar parâmetros de todos os senders P2P
+    if (this.peers.size > 0) {
+      await this.reapplyPeerEncodings();
+    }
   }
 
   async publishToSfu() {
