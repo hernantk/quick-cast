@@ -57,8 +57,10 @@ const {
   useDependencyDescriptor
 } = werift;
 
-// NACK+PLI para recuperacao, REMB+TWCC para estimativa de banda.
-const RTCP_VIDEO = [useNACK(), usePLI(), useREMB(), useTWCC()];
+// NACK+PLI para recuperação de pacotes e pedidos de keyframe.
+// REMB é omitido porque a estimativa do werift calculava bitrate perto de zero
+// e fazia o Chrome rebaixar a resolução para 640x360/360p.
+const RTCP_VIDEO = [useNACK(), usePLI()];
 
 // useOPUS() vem com rtcpFeedback vazio, o que deixa o audio invisivel para o
 // controle de congestionamento: ele consome banda sem aparecer na conta.

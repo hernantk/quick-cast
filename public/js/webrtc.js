@@ -177,33 +177,107 @@ function tuneOpusSdp(sdp, { stereo = true, maxBitrate = AUDIO_MAX_BITRATE } = {}
 }
 
 /**
- * DTX/FEC/maxaveragebitrate no Opus sao preferencias de RECEPTOR: o encoder do
- * apresentador so os aplica se enxergar os parametros na SDP remota. Por isso
- * ajustamos tambem a answer que chega do SFU (ou do espectador, em P2P) antes
- * do setRemoteDescription — e o que de fato liga o DTX no lado que transmite.
+ * Injeta parâmetros de bitrate e largura de banda de vídeo no SDP (x-google-min-bitrate,
+ * x-google-start-bitrate, x-google-max-bitrate e b=AS / b=TIAS).
+ * Isso impede que o Chrome/Edge inicie a transmissão em míseros 300 kbps ou
+ * rebaixe a resolução para 640x360/360p.
  */
-function tuneRemoteDescription(desc, audioOptions) {
+function tuneVideoSdp(sdp, { minBitrate = 4000, startBitrate = 10000, maxBitrate = 25000 } = {}) {
+  if (typeof sdp !== 'string' || !sdp) return sdp;
+
+  const videoPayloads = [...sdp.matchAll(/^a=rtpmap:(\d+)\s+(?:VP8|VP9|H264|AV1|H265)\/\d+/gim)].map((m) => m[1]);
+  if (!videoPayloads.length) return sdp;
+
+  const wanted = {
+    'x-google-min-bitrate': String(minBitrate),
+    'x-google-start-bitrate': String(startBitrate),
+    'x-google-max-bitrate': String(maxBitrate)
+  };
+
+  const lines = sdp.split(/\r\n|\n/);
+  const out = [];
+  const seenFmtp = new Set();
+  let inVideoMedia = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    if (line.startsWith('m=video')) {
+      inVideoMedia = true;
+      out.push(line);
+      out.push(`b=AS:${maxBitrate}`);
+      out.push(`b=TIAS:${maxBitrate * 1000}`);
+      continue;
+    } else if (line.startsWith('m=')) {
+      inVideoMedia = false;
+    }
+
+    if (inVideoMedia && (line.startsWith('b=AS:') || line.startsWith('b=TIAS:'))) {
+      continue;
+    }
+
+    const match = line.match(/^a=fmtp:(\d+)\s+(.*)$/i);
+    if (match && videoPayloads.includes(match[1])) {
+      const params = new Map();
+      for (const part of match[2].split(';')) {
+        const [key, ...rest] = part.split('=');
+        if (key && key.trim()) params.set(key.trim(), rest.join('='));
+      }
+      for (const [key, value] of Object.entries(wanted)) params.set(key, value);
+      seenFmtp.add(match[1]);
+      out.push(`a=fmtp:${match[1]} ${[...params].map(([k, v]) => `${k}=${v}`).join(';')}`);
+      continue;
+    }
+
+    out.push(line);
+  }
+
+  for (const pt of videoPayloads) {
+    if (!seenFmtp.has(pt)) {
+      const fmtp = Object.entries(wanted).map(([k, v]) => `${k}=${v}`).join(';');
+      for (let i = out.length - 1; i >= 0; i--) {
+        const match = out[i].match(new RegExp(`^a=rtpmap:${pt}\\s+`, 'i'));
+        if (match) {
+          out.splice(i + 1, 0, `a=fmtp:${pt} ${fmtp}`);
+          break;
+        }
+      }
+    }
+  }
+
+  return out.join('\r\n');
+}
+
+function tuneSdp(sdp, audioOptions, videoOptions) {
+  if (typeof sdp !== 'string' || !sdp) return sdp;
+  let tuned = sdp;
+  if (audioOptions !== false) tuned = tuneOpusSdp(tuned, audioOptions);
+  if (videoOptions) tuned = tuneVideoSdp(tuned, videoOptions);
+  return tuned;
+}
+
+function tuneRemoteDescription(desc, audioOptions, videoOptions) {
   if (!desc?.sdp) return desc;
   try {
-    return new RTCSessionDescription({ type: desc.type, sdp: tuneOpusSdp(desc.sdp, audioOptions) });
+    return new RTCSessionDescription({ type: desc.type, sdp: tuneSdp(desc.sdp, audioOptions, videoOptions) });
   } catch (err) {
     console.warn('[WebRTC] Ajuste de SDP remota ignorado:', err.message);
     return new RTCSessionDescription(desc);
   }
 }
 
-function tuneLocalDescription(desc, audioOptions) {
+function tuneLocalDescription(desc, audioOptions, videoOptions) {
   if (!desc?.sdp) return desc;
   try {
-    return { type: desc.type, sdp: tuneOpusSdp(desc.sdp, audioOptions) };
+    return { type: desc.type, sdp: tuneSdp(desc.sdp, audioOptions, videoOptions) };
   } catch (err) {
-    console.warn('[WebRTC] Ajuste de SDP do Opus ignorado:', err.message);
+    console.warn('[WebRTC] Ajuste de SDP local ignorado:', err.message);
     return desc;
   }
 }
 
 function getEncodingProfile(quality) {
-  return ENCODING_PROFILES[quality] || ENCODING_PROFILES['1080p60'];
+  return ENCODING_PROFILES[quality] || ENCODING_PROFILES['1080p60_ultra'] || ENCODING_PROFILES['1080p60'];
 }
 
 function setTrackContentHint(track, hint) {
@@ -254,7 +328,7 @@ function preferEfficientVideoCodecs(peer) {
   }
 }
 
-async function applySenderParams(sender, { maxBitrate, maxFramerate, degradationPreference, networkPriority } = {}) {
+async function applySenderParams(sender, { maxBitrate, maxFramerate, degradationPreference, networkPriority, scaleResolutionDownBy = 1 } = {}) {
   if (!sender) return;
 
   try {
@@ -264,6 +338,7 @@ async function applySenderParams(sender, { maxBitrate, maxFramerate, degradation
     }
 
     params.encodings.forEach((enc) => {
+      enc.scaleResolutionDownBy = scaleResolutionDownBy || 1.0;
       if (maxBitrate) enc.maxBitrate = maxBitrate;
       if (maxFramerate) enc.maxFramerate = maxFramerate;
       // Prioridade define quem cede banda primeiro quando o link satura:
@@ -391,6 +466,14 @@ class HostManager {
     return { stereo: !this.audioIsSpeechOnly, maxBitrate: this.audioMaxBitrate() };
   }
 
+  videoSdpOptions() {
+    const encoding = getEncodingProfile(this.quality);
+    const maxKbps = Math.round((encoding.maxBitrate || 8_500_000) / 1000);
+    const startKbps = Math.round(maxKbps * 0.85);
+    const minKbps = Math.max(3000, Math.round(maxKbps * 0.45));
+    return { minBitrate: minKbps, startBitrate: startKbps, maxBitrate: maxKbps };
+  }
+
   async applyPeerEncoding(viewerId) {
     const senders = this.peerSenders.get(viewerId);
     if (!senders) return;
@@ -492,7 +575,8 @@ class HostManager {
 
     const offer = tuneLocalDescription(
       await this.sfuPeer.createOffer({ offerToReceiveAudio: false, offerToReceiveVideo: false }),
-      this.audioSdpOptions()
+      this.audioSdpOptions(),
+      this.videoSdpOptions()
     );
     await this.sfuPeer.setLocalDescription(offer);
     await this.applySfuEncoding();
@@ -506,7 +590,7 @@ class HostManager {
 
   async handleSfuAnswer(answer) {
     if (!this.sfuPeer || !answer) return;
-    await this.sfuPeer.setRemoteDescription(tuneRemoteDescription(answer, this.audioSdpOptions()));
+    await this.sfuPeer.setRemoteDescription(tuneRemoteDescription(answer, this.audioSdpOptions(), this.videoSdpOptions()));
     this.sfuReady = true;
   }
 
@@ -522,7 +606,7 @@ class HostManager {
   async renegotiateSfu() {
     if (!this.sfuPeer || this.sfuPeer.signalingState === 'closed') return;
     preferEfficientVideoCodecs(this.sfuPeer);
-    const offer = tuneLocalDescription(await this.sfuPeer.createOffer(), this.audioSdpOptions());
+    const offer = tuneLocalDescription(await this.sfuPeer.createOffer(), this.audioSdpOptions(), this.videoSdpOptions());
     await this.sfuPeer.setLocalDescription(offer);
     await this.applySfuEncoding();
     this.socket.emit('sfu:publish-offer', {
@@ -784,7 +868,8 @@ class HostManager {
     try {
       const offer = tuneLocalDescription(
         await peer.createOffer({ offerToReceiveAudio: false, offerToReceiveVideo: false }),
-        this.audioSdpOptions()
+        this.audioSdpOptions(),
+        this.videoSdpOptions()
       );
       await peer.setLocalDescription(offer);
       await this.applyPeerEncoding(viewerId);
@@ -805,7 +890,7 @@ class HostManager {
   async handleAnswer(viewerId, answer) {
     const peer = this.peers.get(viewerId);
     if (peer) {
-      await peer.setRemoteDescription(tuneRemoteDescription(answer, this.audioSdpOptions()));
+      await peer.setRemoteDescription(tuneRemoteDescription(answer, this.audioSdpOptions(), this.videoSdpOptions()));
     }
   }
 
@@ -1024,7 +1109,11 @@ class ViewerManager {
       });
     }
 
-    const answer = tuneLocalDescription(await this.peer.createAnswer());
+    const answer = tuneLocalDescription(
+      await this.peer.createAnswer(),
+      null,
+      { minBitrate: 3000, startBitrate: 8000, maxBitrate: 25000 }
+    );
     await this.peer.setLocalDescription(answer);
     this.emitAnswer(answer);
 
